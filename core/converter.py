@@ -482,7 +482,13 @@ def _get_actual_lut_slot_colors(processor) -> dict:
     Returns:
         ``{slot_id: (r, g, b)}`` for every slot whose pure-colour entry is found.
         Returns an empty dict if the data is unavailable or the stack depth < 5.
+        Returns an empty dict for Band modes ('Band:<key>'), whose ramp-LUT
+        stacks hold per-band layer COUNTS, not material IDs (a row like
+        [3,3,3,3,3] would otherwise be misread as 'pure slot 3').
     """
+    if str(getattr(processor, 'color_mode', '') or '').startswith('Band'):
+        return {}
+
     try:
         ref_stacks = np.asarray(processor.ref_stacks)  # (N, 5), top-to-bottom
         lut_rgb    = np.asarray(processor.lut_rgb)     # (N, 3)

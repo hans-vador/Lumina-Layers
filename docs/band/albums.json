@@ -1,0 +1,303 @@
+{
+ "astroworld": {
+  "title": "Astroworld",
+  "width_mm": 150,
+  "advisory": null,
+  "palette_hint": [
+   "Black",
+   "Red",
+   "Sunny Orange",
+   "White"
+  ],
+  "palette": [
+   "Black",
+   "Red",
+   "Sunny Orange",
+   "Vivid Yellow",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "beatopia": {
+  "title": "Beatopia",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Lavender Purple",
+   "Pink",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "blonde": {
+  "title": "Blonde",
+  "width_mm": 150,
+  "advisory": "br",
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Oak",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "cas": {
+  "title": "Cigarettes After Sex",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Oak",
+   "Beige",
+   "White"
+  ],
+  "choice": "auto5"
+ },
+ "currents": {
+  "title": "Currents",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Pink",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "dark_lane": {
+  "title": "Dark Lane Demo Tapes",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Oak",
+   "Beige",
+   "White"
+  ],
+  "choice": "auto5"
+ },
+ "eternal_atake": {
+  "title": "Eternal Atake (Deluxe)",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Sunny Orange",
+   "Vivid Yellow",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "for_all_dogs": {
+  "title": "For All The Dogs Scary Hours Edition",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "french_exit": {
+  "title": "French Exit",
+  "width_mm": 200,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Red",
+   "Sunny Orange",
+   "Beige"
+  ],
+  "choice": "curated"
+ },
+ "graduation": {
+  "title": "Graduation",
+  "width_mm": 150,
+  "advisory": "br",
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Pink",
+   "White"
+  ],
+  "choice": "auto5"
+ },
+ "great_chaos": {
+  "title": "A Great Chaos",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "honestly_nvm": {
+  "title": "Honestly, Nevermind",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "in_rainbows": {
+  "title": "In Rainbows",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Red",
+   "Green",
+   "Vivid Yellow",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "love_deluxe": {
+  "title": "Love Deluxe",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Oak",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "love_sick": {
+  "title": "Love Sick",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Pink",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "octane": {
+  "title": "HARDSTONE PSYCHO",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Green",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "search_rescue": {
+  "title": "Search & Rescue",
+  "width_mm": 150,
+  "advisory": "br",
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Oak",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "sexy_songs": {
+  "title": "Some Sexy Songs 4 U",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "to_hell_with_it": {
+  "title": "to hell with it",
+  "width_mm": 150,
+  "advisory": "br",
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "twilight": {
+  "title": "Twilight",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Lavender Purple",
+   "Pink",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "who_really_cares": {
+  "title": "Who Really Cares",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Klein Blue",
+   "Red",
+   "Pink",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "wlr": {
+  "title": "Whole Lotta Red",
+  "width_mm": 150,
+  "advisory": null,
+  "palette": [
+   "Black",
+   "Coffee Brown",
+   "Red",
+   "Beige",
+   "White"
+  ],
+  "choice": "curated"
+ },
+ "yjhd": {
+  "title": "Yeh Jawaani Hai Deewani",
+  "width_mm": 150,
+  "advisory": "br",
+  "palette": [
+   "Black",
+   "Sunny Orange",
+   "Pink",
+   "Vivid Yellow",
+   "White"
+  ],
+  "choice": "curated"
+ }
+}

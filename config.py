@@ -61,6 +61,10 @@ class PrinterConfig:
     COLOR_LAYERS: int = 5
     BACKING_MM: float = 1.6
     SHRINK_OFFSET: float = 0.02
+    # Band (HueForge-style) mode constants
+    FIRST_LAYER_MM: float = 0.16
+    X2D_BED_MM: float = 256.0
+    MAX_PLAQUE_LAYERS: int = 27
 
 
 class WorkerPoolConfig:
@@ -219,23 +223,53 @@ class ColorSystem:
         'corner_labels_en': ["White (TL)", "Red (TR)", "Blue (BR)", "Yellow (BL)", "Black (Outer)"]
     }
 
+    # Dynamically registered colour systems (e.g. Band mode 'Band:<schedule key>').
+    # Consulted FIRST in get() by exact key, before any substring heuristics.
+    _DYNAMIC: dict = {}
+
+    @staticmethod
+    def register_dynamic(mode_key: str, conf: dict) -> dict:
+        """Register (or replace) a dynamic colour-system configuration.
+
+        Args:
+            mode_key: Exact mode string that callers will pass to ``get`` (e.g.
+                      ``'Band:ab12cd34'``). Must not collide with the built-in
+                      substring patterns (CMYW/RYBW/4-Color/6-Color/8-Color/BW/Merged).
+            conf: Config dict with at least 'name', 'slots', 'preview', 'map',
+                  'layer_count'.
+
+        Returns:
+            The stored config dict.
+        """
+        if not isinstance(mode_key, str) or not mode_key:
+            raise ValueError("mode_key must be a non-empty string")
+        if not isinstance(conf, dict):
+            raise TypeError("conf must be a dict")
+        ColorSystem._DYNAMIC[mode_key] = conf
+        return conf
+
     @staticmethod
     def get(mode: str):
         """
         Get color system configuration (Unified 4-Color Backend)
-        
+
         Args:
             mode: Color mode string (4-Color/6-Color/8-Color/BW)
-        
+
         Returns:
             Color system configuration dict
-        
+
         Note:
             4-Color mode defaults to RYBW palette.
             CMYW and RYBW share the same processing pipeline.
         """
         if mode is None:
             return ColorSystem.RYBW  # Default fallback
+
+        # Dynamic registrations win (exact key match) before any substring test
+        dyn = ColorSystem._DYNAMIC.get(mode)
+        if dyn is not None:
+            return dyn
 
         # Explicit CMYW/RYBW subtypes (must check BEFORE generic "4-Color")
         if "CMYW" in mode:

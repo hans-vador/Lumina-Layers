@@ -1,0 +1,14 @@
+[
+  {"name": "Black",           "hex": "#000000", "td_mm": 0.2, "td_source": "hueforge_lib", "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "White",           "hex": "#FFFFFF", "td_mm": 4.0, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Coffee Brown",    "hex": "#6E4F3A", "td_mm": 0.5, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Klein Blue",      "hex": "#1E44BE", "td_mm": 0.8, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Red",             "hex": "#C12E1F", "td_mm": 0.9, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Green",           "hex": "#00AE42", "td_mm": 0.9, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Sunny Orange",    "hex": "#FF9016", "td_mm": 1.2, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Oak",             "hex": "#B08A5C", "td_mm": 2.0, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Lavender Purple", "hex": "#A78BD4", "td_mm": 1.5, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Pink",            "hex": "#F5A3B7", "td_mm": 6.0, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Beige",           "hex": "#E8DCC5", "td_mm": 4.0, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"},
+  {"name": "Vivid Yellow",    "hex": "#F4E62A", "td_mm": 3.0, "td_source": "guess",        "settings_id": "Bambu PLA Basic @BBL X2D 0.4 nozzle", "filament_id": "GFA00"}
+]

@@ -488,10 +488,11 @@ class LuminaImageProcessor:
     
     def process_image(self, image_path, target_width_mm, modeling_mode,
                      quantize_colors, auto_bg, bg_tol,
-                     blur_kernel=0, smooth_sigma=10):
+                     blur_kernel=0, smooth_sigma=10,
+                     resample=Image.Resampling.NEAREST):
         """
         Main image processing method
-        
+
         Args:
             image_path: Image file path
             target_width_mm: Target width (millimeters)
@@ -501,6 +502,9 @@ class LuminaImageProcessor:
             bg_tol: Background tolerance
             blur_kernel: Median filter kernel size (0=disabled, recommended 0-5)
             smooth_sigma: Bilateral filter sigma value (recommended 5-20)
+            resample: PIL resampling filter used for the resize to target
+                      resolution. Default NEAREST (legacy behaviour: hard edges,
+                      no anti-aliased light fringe). Band mode passes LANCZOS.
         
         Returns:
             dict: Dictionary containing processing results
@@ -587,8 +591,11 @@ class LuminaImageProcessor:
         # 
         # SOLUTION: Use NEAREST to preserve hard edges and ensure dark pixels
         # map to solid dark stacks from Layer 1 upwards.
-        print(f"[IMAGE_PROCESSOR] Using NEAREST interpolation (no anti-aliasing)")
-        img = img.resize((target_w, target_h), Image.Resampling.NEAREST)
+        if resample is None:
+            resample = Image.Resampling.NEAREST
+        print(f"[IMAGE_PROCESSOR] Resize interpolation: {getattr(resample, 'name', resample)}"
+              f"{' (no anti-aliasing)' if resample == Image.Resampling.NEAREST else ''}")
+        img = img.resize((target_w, target_h), resample)
         
         img_arr = np.array(img)
         rgb_arr = img_arr[:, :, :3]
