@@ -41,12 +41,10 @@ class BandSchedule:
         object.__setattr__(self, 'base_min_layers', int(self.base_min_layers))
         if len(names) != len(counts):
             raise ValueError("filament_names and layer_counts must have the same length")
-        if not 1 <= len(names) <= MAX_SLOTS:
-            raise ValueError(f"need 1..{MAX_SLOTS} bands, got {len(names)}")
+        if not 1 <= len(names) <= 32:
+            raise ValueError(f"need 1..32 bands, got {len(names)}")
         if any(c < 1 for c in counts):
             raise ValueError("every band needs at least 1 layer")
-        if len(set(names)) != len(names):
-            raise ValueError("filament names must be unique")
         if self.layer_h <= 0 or self.first_layer_mm <= 0:
             raise ValueError("layer heights must be positive")
         if not 1 <= self.base_min_layers <= counts[0]:
@@ -111,7 +109,7 @@ class BandSchedule:
     def stacks(self) -> np.ndarray:
         """(K',5) int32: per-band layer counts of a k-layer column, zero-padded."""
         k = np.arange(self.n0, self.n_layers + 1, dtype=np.int32)
-        out = np.zeros((k.size, MAX_SLOTS), dtype=np.int32)
+        out = np.zeros((k.size, max(MAX_SLOTS, self.n_bands)), dtype=np.int32)
         out[:, 0] = np.minimum(k, self.n0)
         for b in range(1, self.n_bands):
             out[:, b] = np.clip(k - self.cum(b - 1), 0, self.layer_counts[b])
@@ -125,12 +123,14 @@ class BandSchedule:
     def swap_entries(self, filaments: Mapping[str, 'Filament']) -> list[tuple[float, int, str]]:
         """[(top_z, extruder 1-based = band index + 1, '#RRGGBB'), ...] for bands >= 1."""
         entries = []
+        slots = {name: i+1 for i, name in enumerate(dict.fromkeys(self.filament_names))}
         for b in range(1, self.n_bands):
             z = round(self.top_z(self.band_first_layer(b)), 8)
-            entries.append((z, b + 1, filaments[self.filament_names[b]].hex))
+            entries.append((z, slots[self.filament_names[b]], filaments[self.filament_names[b]].hex))
         return entries
 
     def swap_instructions(self, filaments: Mapping[str, 'Filament']) -> str:
+        slots = {name: i+1 for i, name in enumerate(dict.fromkeys(self.filament_names))}
         lines = [
             f"Start with {self.filament_names[0]} "
             f"({filaments[self.filament_names[0]].hex}, extruder 1) - "
@@ -141,7 +141,7 @@ class BandSchedule:
             name = self.filament_names[b]
             lines.append(
                 f"At layer {n} ({self.top_z(n):.2f} mm) swap to {name} "
-                f"({filaments[name].hex}, extruder {b + 1}) - {self.layer_counts[b]} layers."
+                f"({filaments[name].hex}, extruder {slots[name]}) - {self.layer_counts[b]} layers."
             )
         lines.append(
             f"Total {self.n_layers} layers = {self.total_height_mm:.2f} mm "

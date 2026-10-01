@@ -64,7 +64,15 @@ def main(argv=None) -> int:
     ap.add_argument('--quantize', type=int, default=96, help='K-Means colours for Lumina HiFi (default 96)')
     ap.add_argument('--smooth-sigma', type=float, default=10.0, help='bilateral sigma (default 10)')
     ap.add_argument('--structure', choices=('single', 'double'), default='single')
-    ap.add_argument('--spacer', type=float, default=1.6, help='backing thickness in mm (default 1.6)')
+    ap.add_argument('--spacer', type=float, default=1.0, help='backing thickness in mm (default 1.0; face-up snaps to complete layers)')
+    ap.add_argument('--orientation', choices=['face-down', 'face-up'], default='face-down',
+                    help='face-up puts the thick first layer in the backing')
+    ap.add_argument('--layer-height', type=float, choices=[0.08, 0.04], default=0.08,
+                    help='colour thickness; 0.04 is experimental and below the X2D profile minimum')
+    ap.add_argument('--no-early-stop', action='store_true',
+                    help='keep all five colour layers in face-up jobs (default: stop at best match)')
+    ap.add_argument('--first-layer', type=float, default=0.20,
+                    help='first layer in mm (default 0.20): backing when face-up, viewing layer when face-down')
     ap.add_argument('--advisory', choices=('br', 'bl', 'bc', 'none'), default='none',
                     help='stamp a PARENTAL ADVISORY label into a bottom corner before processing')
     ap.add_argument('--out', default=os.path.join(REPO, 'output', 'stack5'), help='output root directory')
@@ -153,7 +161,8 @@ def main(argv=None) -> int:
             res = convert_album_stack5(
                 img, width_mm=args.width, filaments_json=args.filaments, palette=palette,
                 backing=args.backing, quantize_colors=args.quantize, smooth_sigma=args.smooth_sigma,
-                structure=args.structure, spacer_mm=args.spacer,
+                structure=args.structure, spacer_mm=args.spacer, first_layer_mm=args.first_layer,
+                orientation=args.orientation, layer_h=args.layer_height, early_stop=not args.no_early_stop,
                 advisory=None if args.advisory == 'none' else args.advisory, out_dir=args.out,
                 title=args.title, seed=args.seed, must_include=must,
                 wL=args.wL, hist_k=args.hist_k, k_opaque=args.k_opaque,
@@ -210,6 +219,10 @@ def main(argv=None) -> int:
         print(f"[STACK5] mean dE predicted {st['mean_dE_predicted_palette']:.2f}"
               + (f", matched {st['mean_dE_matched_quantized_vs_lut']:.2f}" if st.get('mean_dE_matched_quantized_vs_lut') is not None else ''))
         print(f"[STACK5] objects: {st['n_objects']}, triangles: {st['triangles_total']:,} {st['triangles_per_object']}")
+        stop = st.get('early_stopping', {})
+        if stop.get('enabled'):
+            print(f"[STACK5] early stopping: {100 * stop['optical_material_saved_fraction']:.1f}% fewer optical voxels; "
+                  f"pixels at 0..5 layers: {stop['pixels_by_colour_layer_count']}")
         print(f"[STACK5] tool changes (est.): {st['tool_changes_est']} "
               f"(+layer transitions: {st['tool_changes_est_with_layer_transitions']}) over {st['total_print_layers']} layers")
         tw = st['tower']

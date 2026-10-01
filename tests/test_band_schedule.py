@@ -79,4 +79,4 @@ def test_validation():
     with pytest.raises(ValueError):
         BandSchedule(('Black', 'White'), (3, 4), base_min_layers=5)
     with pytest.raises(ValueError):
-        BandSchedule(('A', 'B', 'C', 'D', 'E', 'F'), (9, 1, 1, 1, 1, 1))
+        BandSchedule(tuple(str(i) for i in range(33)), (9,)+(1,)*32)

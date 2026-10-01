@@ -81,13 +81,37 @@ def _opacity_fn(model):
     return fn
 
 
+def layer_thicknesses(first_layer_mm: float | None, layer_h: float = LAYER_H,
+                      layers: int = N_LAYERS) -> np.ndarray:
+    """Per-layer thickness vector, col 0 = viewing surface (the slicer's first layer).
+
+    Face-down, the viewing layer is printed first, so a thicker slicer first
+    layer makes the *top* colour layer thicker.  None -> uniform ``layer_h``.
+    """
+    t = np.full(int(layers), float(layer_h), dtype=np.float64)
+    if first_layer_mm is not None:
+        t[0] = float(first_layer_mm)
+    return t
+
+
+def _thickness_vector(layer_h, L: int) -> np.ndarray:
+    """Accept a scalar or an (L,) sequence of per-layer thicknesses."""
+    t = np.asarray(layer_h, dtype=np.float64)
+    if t.ndim == 0:
+        return np.full(L, float(t))
+    if t.shape != (L,):
+        raise ValueError(f"layer_h must be a scalar or shape ({L},), got {t.shape}")
+    return t
+
+
 def synth_lut_linear(rgb_lin: np.ndarray, td: np.ndarray, backing_idx: np.ndarray, model,
-                     stacks: np.ndarray, layer_h: float = LAYER_H) -> np.ndarray:
+                     stacks: np.ndarray, layer_h=LAYER_H) -> np.ndarray:
     """Vectorised face-down compositing.
 
     rgb_lin (S,n,3) linear filament colours, td (S,n) mm, backing_idx (S,) slot of
     the opaque backing, stacks (N,L) slot ids (col 0 = viewing surface) ->
-    linear RGB (S,N,3).
+    linear RGB (S,N,3).  ``layer_h`` is a scalar or an (L,) per-layer thickness
+    vector (see :func:`layer_thicknesses`) so a thick first layer is modelled.
     """
     opacity = _opacity_fn(model)
     rgb_lin = np.asarray(rgb_lin, dtype=np.float64)
@@ -98,19 +122,22 @@ def synth_lut_linear(rgb_lin: np.ndarray, td: np.ndarray, backing_idx: np.ndarra
     N, L = stacks.shape
     if stacks.min() < 0 or stacks.max() >= n:
         raise ValueError("stack slot ids out of range for the filament set")
-    op = np.clip(opacity(np.full_like(td, float(layer_h)), td), 0.0, 1.0)        # (S,n)
+    thick = _thickness_vector(layer_h, L)                                          # (L,)
+    # opacity of every filament at every layer's thickness: (L,S,n)
+    op = np.stack([np.clip(opacity(np.full_like(td, float(t)), td), 0.0, 1.0) for t in thick])
     base = rgb_lin[np.arange(S), backing_idx]                                      # (S,3)
     out = np.broadcast_to(base[:, None, :], (S, N, 3)).copy()
     for j in range(L - 1, -1, -1):
         slot = stacks[:, j]                                                        # (N,)
-        o = op[:, slot][..., None]                                                 # (S,N,1)
+        o = op[j][:, slot][..., None]                                              # (S,N,1)
         c = rgb_lin[:, slot, :]                                                    # (S,N,3)
         out = out * (1.0 - o) + c * o
     return out
 
 
 def synth_lut(filaments: Sequence[Filament], backing_slot: int, model=None,
-              layers: int = N_LAYERS, layer_h: float = LAYER_H) -> tuple[np.ndarray, np.ndarray]:
+              layers: int = N_LAYERS, layer_h: float = LAYER_H,
+              first_layer_mm: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """LUT for ``filaments`` (slot order 0..n-1) over the opaque backing filament
     ``filaments[backing_slot]`` -> (rgb uint8 (N,3), stacks int32 (N,L)).
 
@@ -127,7 +154,8 @@ def synth_lut(filaments: Sequence[Filament], backing_slot: int, model=None,
     stacks = enumerate_stacks(n, layers)
     rgb_lin = np.array([f.rgb_lin for f in fils], dtype=np.float64)[None]          # (1,n,3)
     td = np.array([f.td_mm for f in fils], dtype=np.float64)[None]                  # (1,n)
-    lin = synth_lut_linear(rgb_lin, td, np.array([int(backing_slot)]), model, stacks, layer_h)[0]
+    thick = layer_thicknesses(first_layer_mm, layer_h, layers)
+    lin = synth_lut_linear(rgb_lin, td, np.array([int(backing_slot)]), model, stacks, thick)[0]
     rgb = np.clip(np.round(linear_to_srgb(lin) * 255.0), 0, 255).astype(np.uint8)
     return rgb, stacks
 
@@ -174,9 +202,12 @@ def save_lut_npz(path: str, rgb: np.ndarray, stacks: np.ndarray, meta: dict | No
 
 
 def lut_meta(filaments: Sequence[Filament], backing_slot: int, model, layers: int = N_LAYERS,
-             layer_h: float = LAYER_H) -> dict:
+             layer_h: float = LAYER_H, first_layer_mm: float | None = None) -> dict:
     fils = list(filaments)
+    thick = layer_thicknesses(first_layer_mm, layer_h, layers)
     return {
+        'first_layer_mm': float(thick[0]),
+        'layer_thicknesses_mm': [float(t) for t in thick],
         'palette': [{'slot': i, 'name': f.name, 'hex': f.hex, 'td_mm': f.td_mm,
                      'td_source': f.td_source} for i, f in enumerate(fils)],
         'backing': {'slot': int(backing_slot), 'name': fils[int(backing_slot)].name},
@@ -184,7 +215,7 @@ def lut_meta(filaments: Sequence[Filament], backing_slot: int, model, layers: in
         'model_repr': repr(model),
         'layers': int(layers),
         'layer_h': float(layer_h),
-        'convention': 'stacks[:,0] = viewing surface (Z=0, face-down); backing behind stacks[:,L-1]',
+        'convention': 'stacks[:,0] = viewing surface; backing behind stacks[:,L-1]; print orientation is stored in the recipe',
     }
 
 

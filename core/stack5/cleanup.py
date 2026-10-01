@@ -64,12 +64,15 @@ def region_stats(material_matrix: np.ndarray, mask_solid: np.ndarray, min_px: in
 
 
 def min_region_cleanup(material_matrix: np.ndarray, mask_solid: np.ndarray, min_px: int = 16,
-                       connectivity: int = 4, max_iter: int = 6) -> tuple[np.ndarray, dict]:
+                       connectivity: int = 4, max_iter: int = 6, protected_mask=None) -> tuple[np.ndarray, dict]:
     """Return (cleaned material matrix (H,W,L), stats).  Pixels outside
     ``mask_solid`` are untouched (they stay whatever they were, normally -1)."""
     from scipy import ndimage
     mm = np.asarray(material_matrix).copy()
     mask = np.asarray(mask_solid, bool)
+    protected = np.zeros(mask.shape, bool) if protected_mask is None else np.asarray(protected_mask, bool)
+    if protected.shape != mask.shape:
+        raise ValueError('protected mask must match the solid mask shape')
     H, W, L = mm.shape
     min_px = int(min_px)
     stats = {'min_px': min_px, 'connectivity': int(connectivity), 'layers': []}
@@ -93,6 +96,7 @@ def min_region_cleanup(material_matrix: np.ndarray, mask_solid: np.ndarray, min_
                 small = small[small != 0]
                 if small.size:
                     marked |= np.isin(labels, small)
+            marked &= ~protected
             if not marked.any():
                 break
             src = mask & ~marked

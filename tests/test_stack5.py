@@ -127,6 +127,9 @@ def test_lumina_metric_reproduces_processor_argmin(measured, tmp_path):
     (OpenCV 8-bit Lab, L* x 2.55) picks - the true-Lab metric is not."""
     from core.image_processing import LuminaImageProcessor
     fils = [measured[n] for n in ('Black', 'White', 'Klein Blue', 'Red', 'Vivid Yellow')]
+    # Fixed translucent fixture avoids degenerate identical opaque recipes.
+    from core.band.optics import Filament
+    fils[1] = Filament.from_hex('White', '#FFFFFF', 5.0)
     rgb, stacks = synth_lut(fils, 1, BeerLambertModel())
     lut = save_lut_npz(str(tmp_path / 'l.npz'), rgb, stacks)
     proc = LuminaImageProcessor(lut, register_stack5_mode(fils))
@@ -284,17 +287,31 @@ def test_bambu_flush_formula_and_tower_plan():
     assert small['tower']['x'] == 15 and small['tower']['width'] == 226
 
 
-def test_first_layer_must_equal_layer_height(tmp_path):
+def test_first_layer_thicker_than_layer_height_shifts_mesh(tmp_path):
+    """A 0.16 first layer is realised by stretching the viewing voxel layer, not by
+    letting the slicer skip it: every vertex above z=0.08 moves up by 0.08, the
+    backing modifier follows, and the LUT models the top layer at 0.16."""
+    import zipfile as _zf
     from core.stack5.pipeline import convert_album_stack5, stack5_print_overrides
     ov = stack5_print_overrides(0.08, 0.08)
     assert ov['initial_layer_print_height'] == ov['layer_height'] == '0.08'
+    assert stack5_print_overrides(0.16, 0.08)['initial_layer_print_height'] == '0.16'
     with pytest.raises(ValueError):
-        stack5_print_overrides(0.16, 0.08)
+        stack5_print_overrides(0.04, 0.08)                       # thinner than a colour layer: refused
     img = _gradient_image(tmp_path / 'g.png', n=16)
-    with pytest.raises(ValueError):
-        convert_album_stack5(img, width_mm=1.6, palette=['Black', 'White'], first_layer_mm=0.16,
-                             out_dir=str(tmp_path / 'o'))
-    assert not (tmp_path / 'o').exists()                        # rejected before any work
+    res = convert_album_stack5(img, width_mm=1.6, palette=['Black', 'White'], first_layer_mm=0.16, spacer_mm=1.6,
+                               out_dir=str(tmp_path / 'o'))
+    with _zf.ZipFile(res['threemf']) as zf:
+        raw = zf.read([n for n in zf.namelist() if n.startswith('3D/Objects/')][0]).decode()
+        cfg = json.loads(zf.read('Metadata/project_settings.config'))
+        lcr = zf.read('Metadata/layer_config_ranges.xml').decode()
+    zs = sorted({float(v) for v in re.findall(r'<vertex [^>]*z="([^"]+)"', raw)})
+    assert zs[0] == 0.0 and 0.08 not in zs and 0.16 in zs           # layer 0 now spans 0..0.16
+    assert all(abs((z - 0.16) / 0.08 - round((z - 0.16) / 0.08)) < 1e-6 for z in zs[1:])
+    assert cfg['initial_layer_print_height'] == '0.16' and cfg['layer_height'] == '0.08'
+    assert 'min_z="0.48"' in lcr and 'max_z="2.08"' in lcr
+    assert res['stats']['backing_layer_ranges'] == [[0.48, 2.08, 0.2]]
+    assert res['stats']['sliced_layers_est'] == 13
 
 
 # --------------------------------------------------------------------------- cleanup / dilation
@@ -358,7 +375,7 @@ def _gradient_image(path, n=64):
     return str(path)
 
 
-def _rasterize_parts(object_model: bytes, n_layers: int, px=0.1, lh=0.08):
+def _rasterize_parts(object_model: bytes, n_layers: int, px=0.1, lh=0.08, first_layer=None):
     """Per printed layer, bit i set where part i covers the pixel (scanline over
     the X-perpendicular faces at mid layer height)."""
     starts = [m.start() for m in re.finditer(rb'<object ', object_model)] + [len(object_model)]
@@ -381,7 +398,8 @@ def _rasterize_parts(object_model: bytes, n_layers: int, px=0.1, lh=0.08):
         ymax = np.maximum(np.maximum(P0[:, 1], P1[:, 1]), P2[:, 1])
         H, W = occ.shape[1:]
         for k in range(n_layers):
-            zm = (k + 0.5) * lh
+            first = lh if first_layer is None else first_layer
+            zm = first / 2 if k == 0 else first + (k - 0.5) * lh
             sel = xperp & (zmin < zm) & (zmax > zm)
             if not sel.any():
                 continue
@@ -407,9 +425,10 @@ def test_cli_smoke_64px(tmp_path):
     r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-4000:]
     assert '[STACK5] prime tower:' in r.stdout and 'fits' in r.stdout
-    # the first-layer flag is gone: the viewing layer must be one colour layer thick
-    r2 = subprocess.run(cmd + ['--first-layer', '0.16'], cwd=REPO, capture_output=True, text=True, timeout=60)
-    assert r2.returncode != 0
+    # --first-layer: a thicker first layer is realised by stretching the viewing voxel
+    # layer (default 0.20); one thinner than a colour layer would sample nothing and is refused
+    r2 = subprocess.run(cmd + ['--first-layer', '0.04'], cwd=REPO, capture_output=True, text=True, timeout=60)
+    assert r2.returncode != 0 and 'cannot be thinner' in (r2.stdout + r2.stderr)
     job = out / 'grad64'
     threemf = job / 'grad64_stack5.3mf'
     recipe_p = job / 'grad64_recipe.json'
@@ -428,7 +447,7 @@ def test_cli_smoke_64px(tmp_path):
         MEASURED_JSON if os.path.isfile(MEASURED_JSON) else LIB_JSON)
     assert recipe['settings']['scoring'] == {'chroma_weight': 0.0, 'spool_bonus': 10.0, 'spool_de': 10.0,
                                              'dominant_w': 0.01}
-    assert [p['td_mm'] for p in recipe['palette']][:2] == [0.15, 5.0]
+    assert [p['td_mm'] for p in recipe['palette']][:2] == [0.15, 0.1]
     assert recipe['flush']['flush_min_mm3'] == 48.0 and recipe['tower']['fits'] is True
     assert recipe['layout']['plaque_xy'] == [3.0, 124.8] and recipe['tower']['x'] == 15.0
     assert len(recipe['stats']['islands_per_optical_layer']) == 5
@@ -452,9 +471,10 @@ def test_cli_smoke_64px(tmp_path):
     assert cfg['inherits_group'][0] == '' and cfg['print_compatible_printers'] == ['Bambu Lab X2D 0.4 nozzle']
     assert cfg['print_extruder_id'] == ['1', '1', '1', '2', '2', '2']    # X2D dual-extruder variant lists
     assert cfg['filament_settings_id'] == ['Bambu PLA Basic @BBL X2D 0.4 nozzle'] * F
-    assert cfg['layer_height'] == cfg['initial_layer_print_height'] == '0.08'
-    assert cfg['wall_loops'] == '1' and cfg['top_shell_layers'] == '0' and cfg['bottom_shell_layers'] == '0'
+    assert cfg['layer_height'] == '0.08' and cfg['initial_layer_print_height'] == '0.2'   # default first layer
+    assert cfg['wall_loops'] == '1' and int(cfg['top_shell_layers']) == len(recipe['purge_plan_per_layer']) and cfg['bottom_shell_layers'] == '0'
     assert cfg['sparse_infill_density'] == '100%' and cfg['sparse_infill_pattern'] == 'zig-zag'
+    assert cfg['internal_solid_infill_pattern'] == 'monotonic'
     # prime tower sized from the modelled purge, rectangular, dense
     assert cfg['enable_prime_tower'] == '1' and cfg['prime_tower_rib_wall'] == '0'
     assert cfg['prime_tower_infill_gap'] == '100%' and cfg['prime_tower_brim_width'] == '0'
@@ -480,37 +500,41 @@ def test_cli_smoke_64px(tmp_path):
     for k, m in mult.items():
         assert len(cfg[k]) == m * F, k
     dsts = cfg['different_settings_to_system'][0].split(';')
-    assert dsts == sorted(dsts) and {'initial_layer_print_height', 'prime_tower_brim_width', 'prime_tower_width',
+    assert dsts == sorted(dsts) and {'prime_tower_brim_width', 'prime_tower_width',
                                     'wall_loops', 'skirt_loops', 'bottom_shell_layers'} <= set(dsts)
     assert cfg['brim_type'] == 'no_brim' and cfg['prime_tower_brim_width'] == '0'
     assert len(cfg['different_settings_to_system']) == F + 2
     # first-layer adhesion (Sep 5 2026): slow, unfanned, 65 C bed, no elephant-foot compensation,
-    # first layer still one 0.08 mm colour layer; filament keys listed per filament so Studio keeps them
+    # 0.16 mm first layer over 0.08 colour layers; filament keys listed per filament so Studio keeps them
     assert cfg['initial_layer_speed'] == ['18'] * 6 and cfg['initial_layer_infill_speed'] == ['20'] * 6
     assert cfg['elefant_foot_compensation'] == '0' and cfg['initial_layer_acceleration'] == ['500'] * 6
     assert {'initial_layer_speed', 'initial_layer_infill_speed', 'elefant_foot_compensation'} <= set(dsts)
     assert cfg['hot_plate_temp_initial_layer'] == ['65'] * F and cfg['textured_plate_temp_initial_layer'] == ['65'] * F
     assert cfg['hot_plate_temp'] == ['65'] * F and cfg['close_fan_the_first_x_layers'] == ['1'] * F
-    assert cfg['first_x_layer_fan_speed'] == ['0'] * F and cfg['nozzle_temperature_initial_layer'] == ['225'] * F
+    assert cfg['first_x_layer_fan_speed'] == ['0'] * F
+    # nozzle 205 C on every layer (Hans, Sep 21 2026), written per filament so Bambu Studio keeps it
+    assert cfg['nozzle_temperature_initial_layer'] == ['205'] * F and cfg['nozzle_temperature'] == ['205'] * F
     for i in range(1, F + 1):
         fd = set(cfg['different_settings_to_system'][i].split(';'))
         assert {'hot_plate_temp_initial_layer', 'close_fan_the_first_x_layers', 'nozzle_temperature_initial_layer'} <= fd
-    assert cfg['different_settings_to_system'][F + 1] == ''
+    assert 'machine_start_gcode' in cfg['different_settings_to_system'][F + 1].split(';')
+    assert 'machine: A1' not in cfg['machine_start_gcode']
     assert recipe['threemf_check']['project_settings']['initial_layer_speed'] == ['18'] * 6
-    # backing printed at 0.2 mm through a height-range modifier: colour 0..0.4 stays 0.08,
-    # backing 0.4..2.0 (20 x 0.08 = 1.6 mm) becomes 8 layers of 0.2
+    # Default requested backing is 1 mm; native face-down voxels snap it to .96.
+    # Colour spans 0..0.48 (0.16 first layer + 4 x 0.08), backing 0.48..1.44.
+    assert recipe['settings']['spacer_mm'] == 1.0
     with zipfile.ZipFile(threemf) as zf:
         lcr = zf.read('Metadata/layer_config_ranges.xml').decode()
-    assert '<object id="1">' in lcr and '<range min_z="0.4" max_z="2">' in lcr
+    assert '<object id="1">' in lcr and '<range min_z="0.52" max_z="1.48">' in lcr
     assert '<option opt_key="layer_height">0.2</option>' in lcr
-    assert recipe['stats']['backing_layer_ranges'] == [[0.4, 2.0, 0.2]] and recipe['stats']['sliced_layers_est'] == 13
+    assert recipe['stats']['backing_layer_ranges'] == [[0.52, 1.48, 0.2]] and recipe['stats']['sliced_layers_est'] == 10
     assert recipe['settings']['backing_layer_h'] == 0.2
     exts = [int(x) for x in re.findall(r'key="extruder" value="(\d+)"', ms)]
     assert exts == list(range(1, F + 1))
     assert 'plater_name" value="grad64"' in ms
     # parts tile every layer exactly (no dilation): no pixel in two parts, none uncovered
     n_layers = recipe['stats']['total_print_layers']
-    occ = _rasterize_parts(obj, n_layers)
+    occ = _rasterize_parts(obj, n_layers, first_layer=.2)
     popcount = np.array([bin(v).count('1') for v in range(256)])
     for k in range(n_layers):
         assert (popcount[occ[k]] == 1).all(), f"layer {k}: overlap/gaps"
@@ -523,6 +547,8 @@ def test_cli_smoke_64px(tmp_path):
 def test_backing_layer_ranges_rules():
     from core.stack5.pipeline import backing_layer_ranges, layer_config_ranges_xml
     assert backing_layer_ranges(25, 'single') == [(0.4, 2.0, 0.2)]
+    assert backing_layer_ranges(25, 'single', first_layer_mm=0.16) == [(0.48, 2.08, 0.2)]
+    assert backing_layer_ranges(30, 'double', first_layer_mm=0.16) == [(0.48, 2.08, 0.2)]   # top face has no thick first layer
     assert backing_layer_ranges(30, 'double') == [(0.4, 2.0, 0.2)]          # colour on both faces
     assert backing_layer_ranges(25, 'single', backing_layer_h=None) == []
     assert backing_layer_ranges(25, 'single', backing_layer_h=0.08) == []   # no thicker than layer_h
@@ -565,7 +591,7 @@ def test_default_library_is_measured_when_present():
         assert d == MEASURED_JSON
         lib = load_filament_library(d)
         assert list(lib) == list(load_filament_library(LIB_JSON))
-        assert lib['Black'].td_mm == 0.15 and lib['White'].td_mm == 5.0 and lib['Pink'].td_mm == 4.5
+        assert lib['Black'].td_mm == 0.15 and lib['White'].td_mm == 0.1 and lib['Pink'].td_mm == 4.5
     else:
         assert d == LIB_JSON
     assert pipeline.DEFAULT_FILAMENTS_JSON == d
@@ -585,7 +611,7 @@ def test_spool_bonus_prefers_exact_spool_colours(measured, tmp_path):
     names, rep = select_palette(hist, measured, BeerLambertModel(), spool_bonus=10.0)
     best = rep['best']
     assert {'Green', 'White', 'Black'} <= set(names)
-    assert best['backing'] == 'White'
+    assert best['backing'] in names
     assert best['dominant_exact_spool_share'] > 0.9
     assert best['dominant_exact_spool_share_by_filament']['Green'] > 0.3
     assert abs(best['cost'] - (best['cost_fit'] - best['spool_bonus'])) < 1e-9

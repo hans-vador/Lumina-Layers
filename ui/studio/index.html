@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumina — Filament Painting</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b23; --panel2:#1d232d; --line:#2a323e;
+    --ink:#e6edf6; --dim:#8b97a8; --accent:#7c5cff; --ok:#3fb950; --warn:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:13px/1.45 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,Roboto,sans-serif}
+  h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:11.5px}
+  header{display:flex;align-items:baseline;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line)}
+  main{display:grid;grid-template-columns: 1fr 300px 320px; gap:12px; padding:12px; align-items:start}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h2{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+           margin:0 0 9px;font-weight:650}
+
+  /* ---------- preview ---------- */
+  #preview{width:100%;height:100%;object-fit:contain;background:#0a0d12}
+  #stats{margin-top:9px;color:var(--dim);font-size:11.5px}
+  #stats b{color:var(--ink)}
+  .warn{color:var(--warn);margin-top:6px;font-size:11.5px}
+  .toolbar{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  .tgl{background:var(--panel2);border:1px solid var(--line);color:var(--dim);cursor:pointer;
+       border-radius:6px;padding:4px 10px;font-size:11.5px;font-weight:600}
+  .tgl:hover{color:var(--ink)}
+  .tgl.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .toolbar .sep{width:1px;height:18px;background:var(--line);margin:0 3px}
+  .tinyrow{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:11px}
+  .tinyrow input[type=range]{width:92px}
+
+  /* ---------- the layer bar ---------- */
+  .barwrap{display:flex;gap:10px;align-items:stretch;min-height:430px}
+  .ruler{display:flex;flex-direction:column-reverse;justify-content:space-between;
+         color:var(--dim);font-size:10px;padding:2px 0;text-align:right;min-width:40px}
+  #bar{flex:1;display:flex;flex-direction:column-reverse;gap:3px;
+       background:var(--panel2);border:1px dashed var(--line);border-radius:9px;padding:5px;
+       min-height:430px;transition:border-color .12s,background .12s}
+  #bar.drag{border-color:var(--accent);background:#1c1930}
+  .band{position:relative;border-radius:6px;padding:6px 8px;cursor:grab;
+        display:flex;flex-direction:column;justify-content:center;overflow:hidden;
+        border:1px solid rgba(255,255,255,.14);min-height:34px;user-select:none}
+  .band:active{cursor:grabbing}
+  .band.over{outline:2px solid var(--accent);outline-offset:-2px}
+  .band .nm{font-weight:650;font-size:11.5px;white-space:nowrap;overflow:hidden;
+            text-overflow:ellipsis}
+  .band .meta{font-size:10px;opacity:.85;white-space:nowrap}
+  .band .ops{position:absolute;right:5px;top:50%;transform:translateY(-50%);
+             display:flex;gap:3px;opacity:0;transition:opacity .12s}
+  .band:hover .ops{opacity:1}
+  .band .ops button{width:20px;height:20px;border-radius:5px;border:1px solid rgba(0,0,0,.28);
+                    background:rgba(0,0,0,.42);color:#fff;font-size:12px;line-height:1;cursor:pointer;
+                    padding:0}
+  .band .ops button:hover{background:rgba(0,0,0,.65)}
+  .empty{color:var(--dim);text-align:center;padding:30px 10px;font-size:12px}
+
+  /* ---------- palette ---------- */
+  .sw{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:7px;cursor:grab;
+      border:1px solid transparent}
+  .sw:hover{background:var(--panel2);border-color:var(--line)}
+  .chip{width:22px;height:22px;border-radius:5px;border:1px solid rgba(255,255,255,.22);flex:none}
+  .sw .nm{flex:1;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sw input{width:52px;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+            border-radius:5px;padding:2px 5px;font-size:11px;text-align:right}
+  .palscroll{max-height:290px;overflow:auto}
+
+  /* ---------- controls ---------- */
+  label.row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:7px 0;
+            font-size:11.5px;color:var(--dim)}
+  label.row span{white-space:nowrap}
+  input[type=range]{flex:1;accent-color:var(--accent)}
+  input[type=number],input[type=text],select{background:var(--bg);border:1px solid var(--line);
+      color:var(--ink);border-radius:6px;padding:4px 6px;font-size:11.5px;width:78px}
+  .val{color:var(--ink);min-width:38px;text-align:right;font-variant-numeric:tabular-nums}
+  button.btn{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:7px 11px;
+             font-size:12px;font-weight:600;cursor:pointer;width:100%}
+  button.btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--ink)}
+  button.btn:hover{filter:brightness(1.1)}
+  .btnrow{display:flex;gap:7px;margin-top:8px}
+  details{margin-top:9px;border-top:1px solid var(--line);padding-top:8px}
+  summary{cursor:pointer;color:var(--dim);font-size:11px;text-transform:uppercase;
+          letter-spacing:.08em;font-weight:650}
+  pre{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px;
+      font-size:10.5px;white-space:pre-wrap;max-height:190px;overflow:auto;color:var(--dim)}
+  #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel2);
+         border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12px;
+         opacity:0;pointer-events:none;transition:opacity .2s;max-width:70vw}
+  #toast.on{opacity:1}
+  @media(max-width:1100px){main{grid-template-columns:1fr}}
+  #bar{min-width:0;flex:1}.barwrap{min-width:0;width:100%}.band{min-width:0;overflow-wrap:anywhere}.ruler{flex:none}
+  .source-wrap{height:300px;background:#0a0d12;display:flex;justify-content:center}
+  #source{width:100%;height:100%;object-fit:contain;cursor:crosshair}
+  .layer-inspector{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;color:var(--dim)}
+  .layer-inspector input{flex:1;min-width:100px}.layer-inspector output{width:100%;font-size:12px}
+  .core-row,.core-head{display:grid;grid-template-columns:48px 1fr 1fr 28px;gap:6px;align-items:center;margin:6px 0}
+  .core-row input{width:100%;min-width:0}.core-row input[type=color]{padding:2px;height:30px}
+  .core-head{font-size:10px;color:var(--dim)}[hidden]{display:none!important}
+  header{flex-wrap:wrap}main{grid-template-columns:minmax(300px,1fr) 250px 340px}
+  @media(max-width:1100px){main{grid-template-columns:minmax(300px,1fr) 340px}main>.card:nth-child(2){grid-column:2;grid-row:1}main>.card:nth-child(3){grid-column:2}main>.card:first-child{grid-row:1 / span 2}}
+  @media(max-width:700px){main{display:flex;flex-direction:column}main>.card{width:100%}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Lumina · Filament Painting</h1>
+  <span class="sub">image → mesh → filament layers → print</span>
+  <button class="tgl" id="openbutton">Open image</button>
+  <input type="file" id="openimage" accept="image/*" hidden>
+  <button class="tgl" id="saveproject">Save project</button>
+  <button class="tgl" id="openproject">Open project</button>
+  <input type="file" id="projectfile" accept=".json" hidden>
+  <button class="tgl" id="undo" disabled>Undo</button>
+  <button class="tgl" id="redo" disabled>Redo</button>
+  <span class="sub" id="imgname" style="margin-left:auto"></span>
+</header>
+
+<main>
+  <!-- preview -->
+  <section class="card">
+    <h2>Print prediction</h2>
+    <div class="toolbar">
+      <button class="tgl on" data-view="3d">3D</button>
+      <button class="tgl" data-view="2d">Flat</button>
+      <span class="sep"></span>
+      <button class="tgl" id="wire" title="Inspect mesh edges">Triangles</button>
+      <button class="tgl on" id="shaded">Shading</button>
+      <span class="sep"></span>
+      <label class="tinyrow">Mesh detail
+        <input type="range" id="detail" min="60" max="600" step="20" value="400">
+        <i class="val" id="detailV">400</i>
+      </label>
+      <button class="tgl" id="resetview">Reset view</button>
+      <button class="tgl" id="topview">Top</button>
+      <button class="tgl" id="sideview">Side</button>
+      <button class="tgl" id="prediction">Color only</button>
+    </div>
+    <div id="viewport" style="position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;
+         background:#0a0d12">
+      <canvas id="gl" style="width:100%;height:100%;display:block"></canvas>
+      <img id="preview" alt="preview" style="position:absolute;inset:0;display:none">
+      <div id="meshbusy" style="position:absolute;right:8px;top:8px;font-size:10.5px;
+           color:var(--dim);background:rgba(0,0,0,.5);padding:2px 7px;border-radius:5px;
+           opacity:0;transition:opacity .15s">meshing…</div>
+    </div>
+    <label class="layer-inspector">Inspect printed layer
+      <input type="range" id="inspectlayer" min="1" max="1" value="1" step="1">
+      <output id="layerinfo">All layers</output>
+    </label>
+    <div id="stats"></div>
+    <div id="warn" class="warn"></div>
+    <h2 style="margin-top:18px">Source image · click to sample a Mesh Core color</h2>
+    <div class="source-wrap"><img id="source" alt="Original source image"><canvas id="samplecanvas" hidden></canvas></div>
+    <p id="sampleinfo" class="sub">Mesh Core controls height. Print Core controls actual filament color.</p>
+  </section>
+
+  <!-- the bar -->
+  <section class="card">
+    <h2>Print Core · real filaments</h2>
+    <p class="sub">Top = printed last. Base = printed first.</p>
+    <div class="barwrap">
+      <div class="ruler" id="ruler"></div>
+      <div id="bar"></div>
+    </div>
+    <div class="btnrow">
+      <button class="btn" id="auto">Auto-divide layers</button>
+    </div>
+    <div class="btnrow">
+      <button class="btn ghost" id="clear">Clear</button>
+      <button class="btn ghost" id="reverse">Reverse stack</button>
+      <button class="btn ghost" id="sortdark">Dark&nbsp;→&nbsp;light</button>
+    </div>
+  </section>
+
+  <!-- palette + settings -->
+  <section class="card">
+    <h2>Filaments &mdash; drag onto the bar</h2>
+    <div class="palscroll" id="palette"></div>
+    <div class="btnrow">
+      <input type="text" id="nfname" placeholder="name" style="flex:1;width:auto">
+      <input type="text" id="nfhex" placeholder="#RRGGBB" style="width:86px">
+      <input type="number" id="nftd" value="1" step="0.05" min="0.01" style="width:60px">
+      <button class="btn ghost" id="addfil" style="width:auto">Add</button>
+    </div>
+    <div class="btnrow"><button class="btn ghost" id="savelib">Save filament library</button></div>
+
+    <details open>
+      <summary>Mesh mapping</summary>
+      <label class="row"><span>Mesh mode</span><select id="meshmode">
+        <option value="luminance">Standard luminance</option><option value="combo">Combo</option>
+        <option value="max_channel">Max channel</option><option value="color_match">Color Match</option>
+        <option value="color_aware">Color Aware</option><option value="color_pop">Color Pop</option></select></label>
+      <p class="sub" id="modehelp"></p>
+      <div id="matchcontrols">
+        <label class="row"><span>Match metric</span><select id="matchmetric">
+          <option value="cielab">CIELAB</option><option value="rgb">RGB</option>
+          <option value="hsl">HSL (circular hue)</option><option value="dot">Direction + brightness</option></select></label>
+        <h2 style="margin-top:12px">Mesh Core · reference colors</h2>
+        <p class="sub">Bottom to top. These colors define geometry and are independent of your spools.</p>
+        <div class="core-head"><span>Color</span><span>End layer</span><span>TD mm</span><span></span></div>
+        <div id="meshcore"></div>
+        <div class="btnrow"><button class="btn ghost" id="copycore">Copy Print Core</button>
+          <button class="btn ghost" id="addstop">Add color</button></div>
+      </div>
+      <div id="combocontrols"><label class="row"><span>Standard mix</span>
+        <input id="combo" type="range" min="0" max="1" step=".05" value="1"></label></div>
+      <div id="regioncontrols">
+        <label class="row"><span>Gray tolerance</span><input id="tolerance" type="number" min="0" max="255" value="8"></label>
+        <label class="row"><span>Color Pop split</span><input id="regionsplit" type="number" min=".05" max=".95" step=".05" value=".5"></label>
+        <label class="row"><span>Color order</span><select id="channelorder">
+          <option>BGR</option><option>BRG</option><option>GBR</option><option>GRB</option><option>RBG</option><option>RGB</option></select></label>
+        <label class="row"><span>Reverse regions</span><input id="reverseregions" type="checkbox"></label>
+      </div>
+    </details>
+    <details open>
+      <summary>Image</summary>
+      <label class="row"><span>Width mm</span><input type="number" id="width" value="150" step="1"></label>
+      <label class="row"><span>Black point</span><input type="range" id="qlo" min="-0.5" max="0.5" step="0.01" value="-0.13"><i class="val" id="qloV">-0.13</i></label>
+      <label class="row"><span>White point</span><input type="range" id="qhi" min="0.5" max="1.5" step="0.01" value="1.06"><i class="val" id="qhiV">1.06</i></label>
+      <label class="row"><span>Gamma</span><input type="range" id="gamma" min="0.3" max="3" step="0.05" value="1.55"><i class="val" id="gammaV">1.55</i></label>
+      <label class="row"><span>Smoothing</span><input type="range" id="smooth" min="0" max="30" step="1" value="10"><i class="val" id="smoothV">10</i></label>
+      <label class="row"><span>Negative</span><input type="checkbox" id="negative"></label>
+      <label class="row"><span>Full range</span><input type="checkbox" id="fullrange"></label>
+    </details>
+
+    <details>
+      <summary>Geometry</summary>
+      <label class="row"><span>First layer mm</span><input type="number" id="fl" value="0.16" step="0.04"></label>
+      <label class="row"><span>Layer height mm</span><input type="number" id="lh" value="0.08" step="0.01"></label>
+      <label class="row"><span>Min depth mm</span><input id="mindepth" type="number" min=".01" step=".08" placeholder="Auto"></label>
+      <label class="row"><span>Max depth mm</span><input id="maxdepth" type="number" min=".01" step=".08" placeholder="Stack top"></label>
+      <label class="row"><span>Spike removal</span><select id="spikes"><option value="off">Off</option><option value="fast">3 pixels</option><option value="moderate">5 pixels</option><option value="aggressive">7 pixels</option></select></label>
+      <label class="row"><span>Engrave base</span><input type="checkbox" id="engrave" checked></label>
+      <label class="row"><span>Opacity k</span><input type="range" id="kop" min="2" max="10" step="0.5" value="7"><i class="val" id="kopV">7</i></label>
+      <label class="row"><span>Border mm</span><input type="number" id="bw" value="0" step="0.5"></label>
+      <label class="row"><span>Border depth</span><input type="number" id="bd" value="0" step="0.04"></label>
+    </details>
+
+    <details>
+      <summary>Lighting</summary>
+      <label class="row"><span>Mode</span>
+        <select id="lighting"><option value="front">Filament painting</option>
+        <option value="back">Lithophane (back lit)</option></select></label>
+      <label class="row"><span>LED</span><select id="led"></select></label>
+      <label class="row"><span>Intensity</span><input type="range" id="intensity" min="0.2" max="6" step="0.1" value="2.5"><i class="val" id="intensityV">2.5</i></label>
+    </details>
+
+    <details>
+      <summary>Export</summary>
+      <label class="row"><span>Folder</span><input type="text" id="outdir" style="width:150px"></label>
+      <label class="row"><span>Nozzle temp °C</span><input type="number" id="ntemp" value="205" step="5" min="150" max="300"></label>
+      <label class="row"><span>First layer mm/s</span><input type="number" id="flspeed" value="50" step="5" min="5" max="200"></label>
+      <div class="btnrow">
+        <button class="btn ghost" id="ex3mf">3MF</button>
+        <button class="btn ghost" id="exstl">STL</button>
+      </div>
+      <pre id="describe"></pre>
+    </details>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+const $ = s => document.querySelector(s);
+const state = { names: [], counts: [], lib: [], meshCore: [], layers: [] };
+let dragging = null;            // {kind:'new'|'move', name, index}
+
+function toast(msg, ms=2600){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove('on'), ms);
+}
+const byName = n => state.lib.find(f => f.name === n) || {hex:'#888888', td_mm:1};
+function ink(hex){                      // readable label colour on a swatch
+  const n = parseInt(hex.slice(1),16), r=(n>>16&255)/255, g=(n>>8&255)/255, b=(n&255)/255;
+  const lin = c => c<=.04045 ? c/12.92 : Math.pow((c+.055)/1.055, 2.4);
+  return (.2126*lin(r)+.7152*lin(g)+.0722*lin(b)) > .28 ? '#000' : '#fff';
+}
+
+/* ---------------- payload ---------------- */
+function payload(extra={}){
+  return Object.assign({
+    names: state.names, counts: state.counts,
+    width_mm: +$('#width').value, q_lo:+$('#qlo').value, q_hi:+$('#qhi').value,
+    gamma:+$('#gamma').value, first_layer_mm:+$('#fl').value, layer_h:+$('#lh').value,
+    negative:$('#negative').checked, full_range:$('#fullrange').checked,
+    engrave:$('#engrave').checked, k_opaque:+$('#kop').value,
+    lighting:$('#lighting').value, led:$('#led').value, intensity:+$('#intensity').value,
+    border_width_mm:+$('#bw').value, border_depth_mm:+$('#bd').value,
+    smooth_sigma:+$('#smooth').value,
+    nozzle_temp_c:+$('#ntemp').value,
+    first_layer_speed:+$('#flspeed').value,
+    mesh_mode:$('#meshmode').value, mesh_core:state.meshCore, match_metric:$('#matchmetric').value,
+    combo:+$('#combo').value, tolerance:+$('#tolerance').value, region_split:+$('#regionsplit').value,
+    reverse_regions:$('#reverseregions').checked, channel_order:$('#channelorder').value,
+    min_depth_mm:$('#mindepth').value ? +$('#mindepth').value : null,
+    max_depth_mm:$('#maxdepth').value ? +$('#maxdepth').value : null,
+    spike_removal:$('#spikes').value,
+  }, extra);
+}
+async function post(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: JSON.stringify(body)});
+  const j = await r.json().catch(()=>({error:'bad response'}));
+  if(!r.ok) throw new Error(j.error || (Array.isArray(j.detail) ? j.detail.map(e=>e.msg).join('; ') : j.detail) || r.statusText);
+  return j;
+}
+
+let pending = false, queued = false;
+async function render(){
+  if(!state.names.length){ $('#preview').removeAttribute('src'); drawBar();
+    $('#stats').textContent = 'Drag a filament onto the bar to begin.'; return; }
+  if(pending){ queued = true; return; }
+  pending = true;
+  try{
+    const j = await post('/api/state', payload());
+    apply(j);
+  }catch(e){ toast(e.message); }
+  finally{
+    pending = false;
+    if(queued){ queued = false; render(); }
+  }
+}
+function apply(j){
+  if(j.mesh_core) state.meshCore = j.mesh_core;
+  if(j.layers){
+    const wasTop = +$('#inspectlayer').value === +$('#inspectlayer').max;
+    state.layers = j.layers;
+    $('#inspectlayer').max = j.layers.length;
+    if(wasTop) $('#inspectlayer').value = j.layers.length;
+    updateLayer();
+  }
+  drawMeshCore(); syncMode(); recordHistory();
+  if(j.preview) $('#preview').src = j.preview;
+  if(j.describe) $('#describe').textContent = j.describe;
+  if(j.bands) state.bands = j.bands;
+  if(j.stats){
+    const s = j.stats;
+    $('#stats').innerHTML = `<b>${s.layers}</b> layers · <b>${s.height_mm}</b> mm · `
+      + `<b>${s.swaps}</b> swaps · relief ${s.relief_mm[0]}–${s.relief_mm[1]} mm`;
+  }
+  scheduleMesh();
+  const dead = (j.bands||[]).filter((b,i)=> i>0 && b.surface < 0.001).map(b=>b.name);
+  $('#warn').textContent = dead.length
+    ? `${dead.join(', ')} have no exposed top surface; buried layers can still affect the blend.` : '';
+  drawBar();
+}
+
+/* ---------------- the vertical bar ---------------- */
+function drawBar(){
+  const bar = $('#bar'); bar.innerHTML = '';
+  if(!state.names.length){
+    bar.innerHTML = '<div class="empty">Drop filaments here.<br>Bottom = printed first.</div>';
+    $('#ruler').innerHTML = ''; return;
+  }
+  const total = state.counts.reduce((a,b)=>a+b,0);
+  state.names.forEach((name, i) => {
+    const f = byName(name), n = state.counts[i];
+    const info = (state.bands||[])[i] || {};
+    const el = document.createElement('div');
+    el.className = 'band'; el.draggable = true; el.dataset.index = i;
+    el.style.background = f.hex; el.style.color = ink(f.hex);
+    el.style.flexGrow = n; el.style.flexBasis = '0';
+    const swap = i === 0 ? 'base' : (info.swap_z != null ? `swap @ ${info.swap_z} mm` : '');
+    const surf = info.surface != null ? ` · ${(info.surface*100).toFixed(0)}% surface` : '';
+    el.innerHTML = `<div class="nm">${name}</div>`
+      + `<div class="meta">${n} layer${n>1?'s':''} · TD ${f.td_mm} · ${swap}${surf}</div>`
+      + `<div class="ops"><button data-a="dec">–</button><button data-a="inc">+</button>`
+      + `<button data-a="del">×</button></div>`;
+    bar.appendChild(el);
+  });
+  const lh = +$('#lh').value, fl = +$('#fl').value;
+  const top = (fl + lh*(total-1)).toFixed(2);
+  $('#ruler').innerHTML = `<div>0</div><div>${(top/2).toFixed(2)}</div><div>${top} mm</div>`;
+}
+
+$('#bar').addEventListener('click', e => {
+  const b = e.target.closest('button[data-a]'); if(!b) return;
+  const i = +b.closest('.band').dataset.index, a = b.dataset.a;
+  if(a === 'inc') state.counts[i]++;
+  else if(a === 'dec') state.counts[i] = Math.max(1, state.counts[i]-1);
+  else { state.names.splice(i,1); state.counts.splice(i,1); }
+  render();
+});
+
+/* drag from palette, and reorder within the bar */
+function indexFromY(y){
+  // The bar is column-reverse, so stack index grows UPWARD on screen: index 0
+  // (the base, printed first) sits at the bottom. The insertion point is
+  // therefore the number of bands whose centre is above the cursor.
+  const kids = [...$('#bar').querySelectorAll('.band')];
+  if(!kids.length) return 0;
+  return kids.filter(k => {
+    const r = k.getBoundingClientRect();
+    return (r.top + r.height/2) > y;
+  }).length;
+}
+const bar = $('#bar');
+bar.addEventListener('dragover', e => { e.preventDefault(); bar.classList.add('drag'); });
+bar.addEventListener('dragleave', () => bar.classList.remove('drag'));
+bar.addEventListener('drop', e => {
+  e.preventDefault(); bar.classList.remove('drag');
+  if(!dragging) return;
+  let at = indexFromY(e.clientY);
+  if(dragging.kind === 'move'){
+    const from = dragging.index;
+    const [nm] = state.names.splice(from,1);
+    const [ct] = state.counts.splice(from,1);
+    if(at > from) at--;
+    state.names.splice(at,0,nm); state.counts.splice(at,0,ct);
+  }else{
+    if(state.names.length >= 32){ toast('32 print bands maximum'); dragging=null; return; }
+    state.names.splice(at,0,dragging.name);
+    state.counts.splice(at,0, state.names.length===1 ? 9 : 4);
+  }
+  dragging = null; render();
+});
+bar.addEventListener('dragstart', e => {
+  const b = e.target.closest('.band'); if(!b) return;
+  dragging = {kind:'move', index:+b.dataset.index};
+  e.dataTransfer.effectAllowed = 'move';
+  try{ e.dataTransfer.setData('text/plain', 'band:'+b.dataset.index); }catch(_){}
+});
+
+/* ---------------- palette ---------------- */
+function drawPalette(){
+  const p = $('#palette'); p.innerHTML = '';
+  state.lib.slice().sort((a,b)=>a.lightness-b.lightness).forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'sw'; el.draggable = true; el.dataset.name = f.name;
+    el.innerHTML = `<span class="chip" style="background:${f.hex}"></span>`
+      + `<span class="nm" title="${f.name}">${f.name}</span>`
+      + `<input type="number" step="0.05" min="0.01" value="${f.td_mm}" title="TD mm">`;
+    el.querySelector('input').addEventListener('change', async ev => {
+      try{
+        const j = await post('/api/library/td', {name:f.name, td_mm:+ev.target.value});
+        state.lib = j.filaments; drawPalette();
+        if(state.names.includes(f.name)) render();
+        toast(`${f.name} TD → ${(+ev.target.value).toFixed(2)} mm`);
+      }catch(err){ toast(err.message); }
+    });
+    el.addEventListener('dragstart', e => {
+      dragging = {kind:'new', name:f.name}; e.dataTransfer.effectAllowed='copy';
+      try{ e.dataTransfer.setData('text/plain', f.name); }catch(_){}
+    });
+    p.appendChild(el);
+  });
+}
+
+/* ---------------- buttons ---------------- */
+$('#auto').addEventListener('click', async () => {
+  if(!state.names.length) return toast('drag some colours on first');
+  $('#auto').textContent = 'Dividing…';
+  try{
+    const j = await post('/api/auto', payload());
+    state.counts = j.counts; apply(j);
+    toast('layers divided: ' + j.counts.join(' / '));
+  }catch(e){ toast(e.message); }
+  finally{ $('#auto').textContent = 'Auto-divide layers'; }
+});
+$('#clear').addEventListener('click', () => { state.names=[]; state.counts=[]; render(); });
+$('#sortdark').addEventListener('click', () => {
+  const order = state.names.map((n,i)=>({n, c:state.counts[i], l:byName(n).lightness}))
+                           .sort((a,b)=>a.l-b.l);
+  state.names = order.map(o=>o.n); state.counts = order.map(o=>o.c); render();
+});
+$('#addfil').addEventListener('click', async () => {
+  try{
+    const j = await post('/api/library/new', {name:$('#nfname').value, hex:$('#nfhex').value,
+                                              td_mm:+$('#nftd').value});
+    state.lib = j.filaments; drawPalette();
+    $('#nfname').value=''; $('#nfhex').value='';
+    toast('added');
+  }catch(e){ toast(e.message); }
+});
+$('#savelib').addEventListener('click', async () => {
+  try{ const j = await post('/api/library/save', {}); toast(`saved ${j.n} filaments`); }
+  catch(e){ toast(e.message); }
+});
+for(const kind of ['3mf','stl']){
+  $('#ex'+kind).addEventListener('click', async () => {
+    if(!state.names.length) return toast('nothing to export');
+    const b = $('#ex'+kind); b.textContent='…';
+    try{
+      const j = await post('/api/export', payload({kind, out_dir:$('#outdir').value}));
+      toast('exported: ' + (j.threemf || j.stl));
+    }catch(e){ toast(e.message); }
+    finally{ b.textContent = kind.toUpperCase(); }
+  });
+}
+
+/* live controls */
+['qlo','qhi','gamma','smooth','kop','intensity'].forEach(id => {
+  const el = $('#'+id), out = $('#'+id+'V');
+  el.addEventListener('input', () => { out.textContent = el.value; render(); });
+});
+['width','fl','lh','bw','bd','negative','fullrange','engrave','lighting','led','meshmode','matchmetric','combo','tolerance','regionsplit','reverseregions','channelorder','mindepth','maxdepth','spikes']
+  .forEach(id => $('#'+id).addEventListener('change', render));
+
+/* ---------------- 3D viewport ----------------
+   A minimal orbit camera rather than the OrbitControls addon: the addon
+   imports bare 'three', which would need an import map and pins us to a
+   matching build. This is the whole interaction we need in ~40 lines. */
+const gl = $('#gl');
+const renderer = new THREE.WebGLRenderer({canvas: gl, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0d12);
+const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 5000);
+scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+const key = new THREE.DirectionalLight(0xffffff, 1.05); key.position.set(-0.5, 0.9, 1.2);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.33); fill.position.set(1, -0.6, 0.5);
+scene.add(fill);
+
+const orbit = {az: -0.45, el: 0.95, dist: 320, target: new THREE.Vector3(), home: null};
+function placeCamera(){
+  const {az, el, dist, target} = orbit;
+  camera.position.set(
+    target.x + dist*Math.cos(el)*Math.sin(az),
+    target.y - dist*Math.cos(el)*Math.cos(az),
+    target.z + dist*Math.sin(el));
+  camera.up.set(0,0,1);
+  camera.lookAt(target);
+}
+let drag = null;
+gl.addEventListener('pointerdown', e => {
+  drag = {x:e.clientX, y:e.clientY, pan: e.button===2 || e.shiftKey};
+  gl.setPointerCapture(e.pointerId);
+});
+gl.addEventListener('pointerup', e => { drag = null; gl.releasePointerCapture(e.pointerId); });
+gl.addEventListener('contextmenu', e => e.preventDefault());
+gl.addEventListener('pointermove', e => {
+  if(!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if(drag.pan){
+    const k = orbit.dist * 0.0016;
+    const right = new THREE.Vector3().subVectors(camera.position, orbit.target)
+                    .cross(camera.up).normalize();
+    const up = new THREE.Vector3().crossVectors(right,
+                 new THREE.Vector3().subVectors(camera.position, orbit.target)).normalize();
+    orbit.target.addScaledVector(right, -dx*k).addScaledVector(up, -dy*k);
+  }else{
+    orbit.az -= dx*0.008;
+    orbit.el = Math.max(-1.45, Math.min(1.45, orbit.el + dy*0.008));
+  }
+  placeCamera();
+});
+gl.addEventListener('wheel', e => {
+  e.preventDefault();
+  orbit.dist = Math.max(8, Math.min(2500, orbit.dist * (1 + Math.sign(e.deltaY)*0.09)));
+  placeCamera();
+}, {passive:false});
+
+let meshObj = null, rampTexture = null, colorOnly = false;
+const layerCap = {value:1000};
+function frameModel(size){
+  const [w, h, d] = size;
+  orbit.target.set(w/2, h/2, d/2);
+  const halfFov = Math.min(camera.fov * Math.PI / 360,
+    Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect));
+  orbit.dist = Math.hypot(w, h, d) * 0.55 / Math.sin(halfFov);
+  orbit.az = -0.45; orbit.el = 0.95;
+  orbit.home = {az:orbit.az, el:orbit.el, dist:orbit.dist, t:orbit.target.clone(), width:w};
+  placeCamera();
+}
+$('#resetview').addEventListener('click', () => {
+  if(!orbit.home) return;
+  Object.assign(orbit, {az:orbit.home.az, el:orbit.home.el, dist:orbit.home.dist});
+  orbit.target.copy(orbit.home.t); placeCamera();
+});
+// Mesh edges are an optional inspection tool; the default is the solid print.
+let wireObj = null, showWire = false, showShade = true;
+function rebuildWire(){
+  if(wireObj){ scene.remove(wireObj); wireObj.geometry.dispose(); wireObj.material.dispose();
+               wireObj = null; }
+  if(!showWire || !meshObj) return;
+  wireObj = new THREE.LineSegments(
+    new THREE.WireframeGeometry(meshObj.geometry),
+    new THREE.LineBasicMaterial({color: showShade ? 0x101418 : 0x9fb0c6,
+                                 transparent:true, opacity: showShade ? 0.55 : 0.95}));
+  scene.add(wireObj);
+}
+function syncDisplay(){
+  $('#wire').classList.toggle('on', showWire);
+  $('#shaded').classList.toggle('on', showShade);
+  if(meshObj) meshObj.visible = showShade;
+  rebuildWire();
+}
+$('#wire').addEventListener('click', () => {
+  showWire = !showWire;
+  if(!showWire && !showShade) showShade = true;   // never show nothing
+  syncDisplay();
+});
+$('#shaded').addEventListener('click', () => {
+  showShade = !showShade;
+  if(!showShade && !showWire){ showWire = true; }
+  syncDisplay();
+});
+$('#detail').addEventListener('input', () => {
+  $('#detailV').textContent = $('#detail').value;
+});
+$('#detail').addEventListener('change', loadMesh);
+
+function resize(){
+  const r = $('#viewport').getBoundingClientRect();
+  if(!r.width) return;
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / Math.max(r.height, 1); camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+(function loop(){ requestAnimationFrame(loop); renderer.render(scene, camera); })();
+
+let meshPending = false, meshQueued = false;
+async function loadMesh(){
+  if(view() !== '3d' || !state.names.length) return;
+  if(meshPending){ meshQueued = true; return; }
+  meshPending = true; $('#meshbusy').style.opacity = 1;
+  try{
+    const r = await fetch('/api/mesh', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload({detail: +$('#detail').value}))});
+    if(!r.ok) throw new Error((await r.json()).error || r.statusText);
+    const buf = await r.arrayBuffer();
+    const hl = new DataView(buf).getUint32(0, true);
+    const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
+    let off = 4 + hl;
+    const pos = new Float32Array(buf, off, head.nv*3); off += head.nv*12;
+    const idx = new Uint32Array(buf, off, head.nf*3);  off += head.nf*12;
+
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeVertexNormals();
+
+    if(meshObj){ scene.remove(meshObj); meshObj.geometry.dispose(); meshObj.material.dispose(); }
+    if(rampTexture) rampTexture.dispose();
+    const rgba = new Uint8Array(head.ramp.length * 4);
+    head.ramp.forEach((rgb, i) => rgba.set([...rgb, 255], i*4));
+    rampTexture = new THREE.DataTexture(rgba, head.ramp.length, 1);
+    rampTexture.colorSpace = THREE.SRGBColorSpace;
+    rampTexture.minFilter = rampTexture.magFilter = THREE.LinearFilter;
+    rampTexture.needsUpdate = true;
+    const material = (head.backlit || colorOnly) ? new THREE.MeshBasicMaterial() :
+      new THREE.MeshStandardMaterial({roughness:1, metalness:0});
+    const texture = rampTexture;
+    material.onBeforeCompile = shader => {
+      shader.uniforms.printRamp = {value:texture};
+      shader.uniforms.layerCap = layerCap;
+      shader.uniforms.printHeight = {value:head.ramp_height_mm};
+      shader.uniforms.rampSize = {value:head.ramp.length};
+      shader.vertexShader = 'varying float printZ; uniform float layerCap;\n' + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+        '#include <begin_vertex>\ntransformed.z = min(position.z, layerCap); printZ = transformed.z;');
+      shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>',
+        '#include <beginnormal_vertex>\nif(position.z > layerCap) objectNormal = vec3(0.0,0.0,1.0);');
+      shader.fragmentShader = `uniform sampler2D printRamp;
+        uniform float printHeight;
+        uniform float rampSize;
+        varying float printZ;\n` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `
+        float rampU = (clamp(printZ / printHeight, 0.0, 1.0) * (rampSize - 1.0) + 0.5) / rampSize;
+        diffuseColor.rgb = texture2D(printRamp, vec2(rampU, 0.5)).rgb;
+      `);
+    };
+    meshObj = new THREE.Mesh(g, material);
+    scene.add(meshObj);
+    syncDisplay();
+    if(!orbit.home || Math.abs(orbit.home.width - head.size_mm[0]) > 0.01) frameModel(head.size_mm);
+    resize();
+  }catch(e){ toast('3D: ' + e.message); }
+  finally{
+    meshPending = false; $('#meshbusy').style.opacity = 0;
+    if(meshQueued){ meshQueued = false; loadMesh(); }
+  }
+}
+let viewMode = '3d';
+const view = () => viewMode;
+function syncView(){
+  const is3d = view() === '3d';
+  gl.style.display = is3d ? 'block' : 'none';
+  $('#preview').style.display = is3d ? 'none' : 'block';
+  if(is3d){ resize(); loadMesh(); }
+}
+document.querySelectorAll('.tgl[data-view]').forEach(b => b.addEventListener('click', () => {
+  viewMode = b.dataset.view;
+  document.querySelectorAll('.tgl[data-view]').forEach(o => o.classList.toggle('on', o === b));
+  syncView();
+}));
+
+let meshTimer = null;
+function scheduleMesh(){ clearTimeout(meshTimer); meshTimer = setTimeout(loadMesh, 350); }
+
+$('#openbutton').addEventListener('click', () => $('#openimage').click());
+$('#openimage').addEventListener('change', async e => {
+  const file = e.target.files[0]; if(!file) return;
+  try{
+    const body = new FormData(); body.append('file', file);
+    const r = await fetch('/api/upload?width_mm='+encodeURIComponent($('#width').value),
+                          {method:'POST', body});
+    const j = await r.json(); if(!r.ok) throw new Error(j.error || j.detail || r.statusText);
+    state.names = j.names; state.counts = j.counts;
+    $('#imgname').textContent = j.image;
+    $('#source').src = '/api/source?t='+Date.now();
+    state.meshCore = []; history = []; historyIndex = -1;
+    orbit.home = null;
+    await render();
+  }catch(err){ toast(err.message); }
+  finally{ e.target.value = ''; }
+});
+
+const controlIds = {width_mm:'width', q_lo:'qlo', q_hi:'qhi', gamma:'gamma',
+  first_layer_mm:'fl', layer_h:'lh', negative:'negative', full_range:'fullrange',
+  engrave:'engrave', k_opaque:'kop', lighting:'lighting', led:'led', intensity:'intensity',
+  border_width_mm:'bw', border_depth_mm:'bd', smooth_sigma:'smooth', nozzle_temp_c:'ntemp', first_layer_speed:'flspeed', mesh_mode:'meshmode',
+  match_metric:'matchmetric', combo:'combo', tolerance:'tolerance', region_split:'regionsplit',
+  reverse_regions:'reverseregions', channel_order:'channelorder', min_depth_mm:'mindepth',
+  max_depth_mm:'maxdepth', spike_removal:'spikes'};
+function restoreControls(settings){
+  for(const [key,id] of Object.entries(controlIds)){
+    if(!(key in settings)) continue;
+    const el = $('#'+id), value=settings[key];
+    if(el.type==='checkbox') el.checked=value; else el.value=value ?? '';
+    const out=$('#'+id+'V'); if(out) out.textContent=value;
+  }
+  if(settings.mesh_core) state.meshCore=structuredClone(settings.mesh_core);
+}
+function syncMode(){
+  const mode=$('#meshmode').value;
+  $('#matchcontrols').hidden=mode!=='color_match';
+  $('#combocontrols').hidden=mode!=='combo';
+  $('#regioncontrols').hidden=!['color_pop','color_aware'].includes(mode);
+  $('#modehelp').textContent=mode==='color_match'
+    ? 'Colors choose heights. Changing print filaments keeps the reference geometry fixed.'
+    : mode==='luminance' || mode==='combo' || mode==='max_channel'
+      ? 'Brightness chooses height: darker details are lower. Use Color Match for explicit color order.'
+      : 'Colors are separated into height regions; brightness controls height inside each region.';
+  for(const id of ['qlo','qhi','gamma','fullrange']) $('#'+id).disabled=mode==='color_match';
+}
+let selectedStop=0;
+function drawMeshCore(){
+  const root=$('#meshcore'); root.replaceChildren();
+  state.meshCore.forEach((stop,i)=>{
+    const row=document.createElement('div'); row.className='core-row';
+    const color=document.createElement('input'); color.type='color'; color.value=stop.hex;
+    color.title='Reference color '+(i+1); color.setAttribute('aria-label',color.title);
+    color.addEventListener('focus',()=>{selectedStop=i;});
+    color.addEventListener('change',()=>{stop.hex=color.value;render();});
+    const end=document.createElement('input'); end.type='number';end.min=1;end.max=1000;end.value=stop.layer;
+    end.setAttribute('aria-label','Reference end layer '+(i+1));
+    end.addEventListener('change',()=>{stop.layer=+end.value;render();});
+    const td=document.createElement('input'); td.type='number';td.min=.01;td.step=.1;td.value=stop.td_mm;
+    td.setAttribute('aria-label','Reference TD '+(i+1));
+    td.addEventListener('change',()=>{stop.td_mm=+td.value;render();});
+    const del=document.createElement('button');del.textContent='×';del.className='tgl';del.title='Remove reference color';
+    del.addEventListener('click',()=>{state.meshCore.splice(i,1);render();});
+    row.append(color,end,td,del);root.append(row);
+  });
+}
+$('#copycore').addEventListener('click',()=>{
+  let layer=0;state.meshCore=state.names.map((name,i)=>{
+    layer+=state.counts[i];const f=byName(name);return {hex:f.hex,td_mm:f.td_mm,layer};
+  });render();
+});
+$('#addstop').addEventListener('click',()=>{
+  if(state.meshCore.length>=32) return toast('Up to 32 reference colors');
+  const layer=(state.meshCore.at(-1)?.layer || 0)+1;
+  const total=state.counts.reduce((a,b)=>a+b,0);
+  if(layer>total) state.counts[state.counts.length-1]+=layer-total;
+  state.meshCore.push({hex:'#ffffff',td_mm:1,layer});selectedStop=state.meshCore.length-1;render();
+});
+$('#reverse').addEventListener('click',()=>{state.names.reverse();state.counts.reverse();render();});
+$('#source').addEventListener('click',e=>{
+  const img=e.currentTarget,r=img.getBoundingClientRect();
+  const scale=Math.min(r.width/img.naturalWidth,r.height/img.naturalHeight);
+  const x=Math.floor((e.clientX-r.left-(r.width-img.naturalWidth*scale)/2)/scale);
+  const y=Math.floor((e.clientY-r.top-(r.height-img.naturalHeight*scale)/2)/scale);
+  if(x<0 || y<0 || x>=img.naturalWidth || y>=img.naturalHeight) return;
+  const canvas=$('#samplecanvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+  const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);
+  const rgb=ctx.getImageData(x,y,1,1).data;
+  const hex='#'+[...rgb].slice(0,3).map(v=>v.toString(16).padStart(2,'0')).join('');
+  if(!state.meshCore.length) $('#copycore').click();
+  selectedStop=Math.min(selectedStop,state.meshCore.length-1);
+  if(selectedStop<0) return;
+  state.meshCore[selectedStop].hex=hex;$('#meshmode').value='color_match';
+  $('#sampleinfo').textContent=`Sampled ${hex} into reference color ${selectedStop+1}. Select a reference color before sampling another.`;
+  render();
+});
+function updateLayer(){
+  const layer=state.layers[+$('#inspectlayer').value-1];if(!layer)return;
+  const top=+$('#inspectlayer').value===state.layers.length;
+  layerCap.value=top ? 1000 : layer.z;
+  $('#layerinfo').textContent=`${top?'Complete · ':''}Layer ${layer.layer} · ${layer.z.toFixed(2)} mm · ${layer.name}`;
+}
+$('#inspectlayer').addEventListener('input',updateLayer);
+$('#topview').addEventListener('click',()=>{orbit.az=0;orbit.el=Math.PI/2-.001;placeCamera();});
+$('#sideview').addEventListener('click',()=>{orbit.az=0;orbit.el=.10;placeCamera();});
+$('#prediction').addEventListener('click',()=>{colorOnly=!colorOnly;$('#prediction').classList.toggle('on',colorOnly);loadMesh();});
+let history=[],historyIndex=-1,restoring=false;
+function recordHistory(){
+  if(restoring)return;
+  const value=JSON.stringify(payload());
+  if(value!==history[historyIndex]){history=history.slice(0,historyIndex+1);history.push(value);if(history.length>60)history.shift();historyIndex=history.length-1;}
+  $('#undo').disabled=historyIndex<=0;$('#redo').disabled=historyIndex>=history.length-1;
+}
+async function travelHistory(step){
+  const index=historyIndex+step;if(index<0||index>=history.length)return;
+  const saved=JSON.parse(history[index]);historyIndex=index;restoring=true;
+  state.names=saved.names;state.counts=saved.counts;restoreControls(saved);
+  try{await render();}finally{restoring=false;$('#undo').disabled=historyIndex<=0;$('#redo').disabled=historyIndex>=history.length-1;}
+}
+$('#undo').addEventListener('click',()=>travelHistory(-1));$('#redo').addEventListener('click',()=>travelHistory(1));
+$('#saveproject').addEventListener('click',async()=>{
+  try{
+    const r=await fetch('/api/project/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});
+    if(!r.ok)throw new Error((await r.json()).error || 'Project could not be saved');
+    const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');
+    a.href=url;a.download=($('#imgname').textContent.replace(/\.[^.]+$/,'') || 'painting')+'.lumina.json';a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),10000);toast('Project saved with source image and both cores');
+  }catch(e){toast(e.message);}
+});
+$('#openproject').addEventListener('click',()=>$('#projectfile').click());
+$('#projectfile').addEventListener('change',async e=>{
+  if(!e.target.files[0])return;
+  try{
+    const data=new FormData();data.append('file',e.target.files[0]);
+    const r=await fetch('/api/project/open',{method:'POST',body:data});const j=await r.json();
+    if(!r.ok)throw new Error(j.error || 'Project could not be opened');
+    state.lib=j.filaments;state.names=j.names;state.counts=j.counts;restoreControls(j.settings);
+    history=[];historyIndex=-1;orbit.home=null;drawPalette();
+    $('#imgname').textContent=j.image;$('#source').src='/api/source?t='+Date.now();apply(j);
+  }catch(err){toast(err.message);}finally{e.target.value='';}
+});
+
+/* ---------------- boot ---------------- */
+window.state = state;
+(async () => {
+  resize(); syncView();
+  const lib = await (await fetch('/api/library')).json();
+  state.lib = lib.filaments;
+  $('#led').innerHTML = lib.leds.map(l=>`<option>${l}</option>`).join('');
+  $('#led').value = 'Natural White 4000K';
+  drawPalette();
+  const boot = await (await fetch('/api/boot')).json();
+  $('#outdir').value = boot.out_dir;
+  if(boot.opened){
+    restoreControls(boot.settings || {});
+    state.names = boot.names; state.counts = boot.counts;
+    $('#imgname').textContent = boot.image;
+    $('#source').src = '/api/source?t='+Date.now();
+    apply(boot);
+  } else {
+    drawBar();
+    $('#stats').textContent = 'Open an image to create a filament painting.';
+  }
+})();
+</script>
+</body>
+</html>

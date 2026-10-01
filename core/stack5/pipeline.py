@@ -42,7 +42,7 @@ from core.band.optics import BeerLambertModel, Filament, load_filament_library, 
 from core.band.pipeline import advisory_stamp_mask
 from core.stack5 import flush as flushmod
 from core.stack5.cleanup import min_region_cleanup, region_stats, resync_matched_rgb
-from core.stack5.lut import (LAYER_H, N_LAYERS, choose_backing, is_pure, lut_meta,
+from core.stack5.lut import (LAYER_H, N_LAYERS, choose_backing, is_pure, layer_thicknesses, lut_meta,
                              pure_stack_indices, register_stack5_mode, save_lut_npz, synth_lut)
 from core.stack5.palette import (DEFAULT_CHROMA_WEIGHT, DEFAULT_DOMINANT_W, DEFAULT_METRIC,
                                  DEFAULT_NEED_SHARE, DEFAULT_SPOOL_PENALTY,
@@ -76,12 +76,13 @@ PRINT_SETTINGS_ID = 'Stack5 0.08mm @BBL X2D'              # our self-contained "
 SYSTEM_PROCESS_JSON = os.path.join(REPO, 'assets', 'x2d_process_0.08mm_high_quality_system.json')
 # Every process key we deliberately change from the X2D 0.08 mm system preset
 # (on top of stack5_print_overrides + the prime tower plan).  The plaque is a
-# 2 mm slab of 100 % infill printed face down: no shells, one wall, a skirt to
-# prime, no brim (the tower layout assumes the plaque footprint is exact).
+# solid plaque with one wall, a skirt to prime, and no brim. Solid depth is
+# set from the layer plan so Bambu uses monotonic rather than sparse infill.
 STACK5_PROCESS_OVERRIDES = {
-    'wall_loops': '1', 'top_shell_layers': '0', 'bottom_shell_layers': '0',
+    'wall_loops': '1', 'top_shell_layers': '1', 'bottom_shell_layers': '0',
     'sparse_infill_density': '100%', 'sparse_infill_pattern': 'zig-zag',
-    'top_surface_pattern': 'monotonicline', 'ironing_type': 'no ironing',
+    'internal_solid_infill_pattern': 'monotonic',
+    'top_surface_pattern': 'monotonic', 'bottom_surface_pattern': 'monotonic', 'ironing_type': 'no ironing',
     'enable_prime_tower': '1', 'flush_into_infill': '0', 'flush_into_objects': '0', 'flush_into_support': '1',
     'seam_position': 'aligned', 'wall_generator': 'classic',
     'print_sequence': 'by layer', 'timelapse_type': '0', 'skirt_loops': '1', 'skirt_distance': '2',
@@ -89,7 +90,8 @@ STACK5_PROCESS_OVERRIDES = {
 }
 # First-layer adhesion (Hans, Sep 5 2026: the 0.08 mm first layer was lifting).  The first
 # layer stays 0.08 mm - it is the face-down viewing layer and the colours depend on it -
-# so adhesion comes from a slow, hot, unfanned first layer instead.  Process keys go
+# so adhesion comes from a slow, unfanned first layer instead.  (Sep 21 2026: nozzle
+# dropped from 220/225 to 205 on every layer at Hans's request; speed and fans unchanged.)  Process keys go
 # through the self-contained process preset (list-valued X2D keys are expanded to the
 # system list length); filament keys are written per filament AND listed in each
 # filament's different_settings_to_system, otherwise Bambu Studio silently reverts them
@@ -107,7 +109,11 @@ FIRST_LAYER_FILAMENT_OVERRIDES = {
     'close_additional_fan_first_x_layers': '1',   # aux fan off on the first layer too
     'hot_plate_temp_initial_layer': '65', 'hot_plate_temp': '65',            # smooth / high-temp PEI plate
     'textured_plate_temp_initial_layer': '65', 'textured_plate_temp': '65',  # textured PEI plate
-    'nozzle_temperature_initial_layer': '225',    # +5 C on the first layer only (system 220)
+    # Filament temperature is a per-filament key, so it lives here with the other
+    # filament overrides and gets listed in different_settings_to_system - otherwise
+    # Bambu Studio reverts it to the 220 system value.
+    'nozzle_temperature': '205',
+    'nozzle_temperature_initial_layer': '205',
 }
 STACK5_PROCESS_OVERRIDES.update(FIRST_LAYER_PROCESS_OVERRIDES)
 FILAMENT_SETTINGS_ID = 'Bambu PLA Basic @BBL X2D 0.4 nozzle'
@@ -135,19 +141,23 @@ def stack5_print_overrides(first_layer_mm: float = 0.08, layer_h: float = LAYER_
     """Print profile for Lumina's face-down stacks on the X2D (applied on top of
     writer3mf.BAND_PRINT_OVERRIDES, which it replaces where they differ).
 
-    The first layer MUST be one colour layer thick: the converter places the
-    viewing-surface stack at Z 0..layer_h (transform[2,2] = LAYER_HEIGHT), so a
-    thicker initial_layer_print_height would sample the slicer's first layer at
-    mid-height and drop the viewing surface entirely.
+    The converter meshes the viewing-surface stack at Z 0..layer_h
+    (transform[2,2] = LAYER_HEIGHT).  A thicker first layer is therefore NOT
+    just a profile value: postprocess_3mf shifts every mesh vertex at
+    z >= layer_h up by (first_layer_mm - layer_h) so the viewing voxel layer
+    spans Z 0..first_layer_mm and the slicer's first layer samples it.  The
+    synthetic LUT and the palette search model that layer at its real
+    thickness (lut.layer_thicknesses).  A first layer thinner than layer_h
+    would sample nothing and is refused.
     """
-    if abs(float(first_layer_mm) - float(layer_h)) > 1e-9:
-        raise ValueError(f"initial_layer_print_height ({first_layer_mm:g}) must equal the colour layer "
-                         f"height ({layer_h:g}): the face-down viewing layer occupies Z 0..{layer_h:g}")
+    if float(first_layer_mm) < float(layer_h) - 1e-9:
+        raise ValueError(f"initial_layer_print_height ({first_layer_mm:g}) cannot be thinner than the colour "
+                         f"layer height ({layer_h:g}): the face-down viewing layer must fill the first layer")
     ov = {
         'layer_height': f"{float(layer_h):g}",
         'initial_layer_print_height': f"{float(first_layer_mm):g}",
         'wall_loops': '1',
-        'top_shell_layers': '0',
+        'top_shell_layers': '1',
         'bottom_shell_layers': '0',
         'sparse_infill_density': '100%',
         'sparse_infill_pattern': 'zig-zag',
@@ -158,6 +168,9 @@ def stack5_print_overrides(first_layer_mm: float = 0.08, layer_h: float = LAYER_
         'print_compatible_printers': [PRINTER_SETTINGS_ID],
     }
     if tower_plan is not None:
+        # Cover the plaque depth with solid layers. Bambu otherwise classifies
+        # even 100% fill as sparse, where monotonic is not an accepted pattern.
+        ov['top_shell_layers'] = str(max(1, len(tower_plan['layers'])))
         ov.update(flushmod.tower_config_keys(tower_plan))
     return ov
 
@@ -192,7 +205,8 @@ def apply_stack5_process_preset(cfg: dict, overrides: dict, system: Optional[dic
         cfg[k] = _shaped_like(sysp.get(k), v)
     for k, v in overrides.items():
         cfg[k] = [str(x) for x in v] if isinstance(v, list) else str(v)
-    cfg['print_settings_id'] = PRINT_SETTINGS_ID
+    cfg['print_settings_id'] = (PRINT_SETTINGS_ID if float(cfg['layer_height']) == LAYER_H
+                                else f"Stack5 {float(cfg['layer_height']):g}mm experimental @BBL X2D")
     cfg['print_compatible_printers'] = [PRINTER_SETTINGS_ID]
     cfg['inherits_group'] = [''] * len(cfg.get('inherits_group') or [''])
     cfg['different_settings_to_system'][0] = ';'.join(process_diff_vs_system(cfg, sysp))
@@ -278,22 +292,35 @@ def layer_config_ranges_xml(ranges: Sequence[tuple[float, float, float]], object
 
 def backing_layer_ranges(total_layers: int, structure: str, layer_h: float = LAYER_H,
                          colour_layers: int = N_LAYERS,
-                         backing_layer_h: Optional[float] = DEFAULT_BACKING_LAYER_H) -> list[tuple[float, float, float]]:
+                         backing_layer_h: Optional[float] = DEFAULT_BACKING_LAYER_H,
+                         first_layer_mm: Optional[float] = None) -> list[tuple[float, float, float]]:
     """Height range(s) covering the spacer between the colour stacks.
 
-    single-sided (face down): colour at z 0 .. colour_layers*layer_h, backing above
-    it up to the top.  double-sided: colour on both faces, backing in between.
+    single-sided (face down): colour at z 0 .. first_layer + (colour_layers-1)*layer_h,
+    backing above it up to the top.  double-sided: colour on both faces, backing in
+    between (the top face has no thick first layer).  first_layer_mm None -> layer_h.
     Returns [] when disabled or when the backing is thinner than one thick layer.
     """
     if not backing_layer_h or float(backing_layer_h) <= float(layer_h) + 1e-9:
         return []
-    lo = colour_layers * float(layer_h)
-    hi = int(total_layers) * float(layer_h)
+    fl = float(layer_h) if first_layer_mm is None else float(first_layer_mm)
+    lo = fl + (colour_layers - 1) * float(layer_h)
+    hi = fl + (int(total_layers) - 1) * float(layer_h)
     if structure == 'double':
         hi -= colour_layers * float(layer_h)
     if hi - lo < float(backing_layer_h) - 1e-9:
         return []
     return [(round(lo, 6), round(hi, 6), float(backing_layer_h))]
+
+
+def face_up_backing_schedule(spacer_mm, first_layer_mm, layer_h, backing_layer_h=None):
+    """Snap backing to first layer + whole backing layers (nearest thickness)."""
+    h = float(backing_layer_h or layer_h)
+    if not np.isfinite(h) or h <= 0:
+        raise ValueError('backing layer height must be positive and finite')
+    count = 1 + max(0, int(round((spacer_mm - first_layer_mm) / h)))
+    height = round(first_layer_mm + (count - 1) * h, 6)
+    return count, height, h
 
 
 def _name_object(main_xml: str, ms_xml: str, name: str) -> tuple[str, str]:
@@ -454,7 +481,8 @@ def run_lumina(image_path: str, lut_path: str, mode_key: str, width_mm: float, s
                structure: str, quantize_colors: int, smooth_sigma: float, backing_slot: int,
                hue_weight: float = 0.0, skip_glb: bool = True, enable_cleanup: bool = True,
                dilate: bool = False, min_region_px: int = DEFAULT_MIN_REGION_PX,
-               metric: str = 'lumina', wL: float = 1.0, hue_params=None) -> dict:
+               metric: str = 'lumina', wL: float = 1.0, hue_params=None,
+               stopping=None) -> dict:
     """Call core.converter.convert_image_to_3d (HiFi, native algorithm) and capture
     the processor result (material_matrix etc.) that Lumina does not return.
 
@@ -476,6 +504,23 @@ def run_lumina(image_path: str, lut_path: str, mode_key: str, width_mm: float, s
     Orig = conv.LuminaImageProcessor
 
     class _Capturing(Orig):  # type: ignore[misc, valid-type]
+        def _process_high_fidelity_mode(self, rgb_arr, *args, **kwargs):
+            from core.stack5.edges import contrast_edges
+            matched, matrix, target, debug = super()._process_high_fidelity_mode(rgb_arr, *args, **kwargs)
+            edges = contrast_edges(rgb_arr)
+            # Bound target diversity for the exhaustive variable-depth search.
+            edge_rgb = (np.rint(rgb_arr[edges].astype(float) / 17) * 17).astype(np.uint8)
+            target[edges] = edge_rgb
+            if edges.any():
+                edge_matcher = make_matcher('lab', self.lut_rgb, wL=2.0)
+                unique_edges, inverse = np.unique(edge_rgb, axis=0, return_inverse=True)
+                ids = edge_matcher.match_colors_batch(unique_edges, k=32)[inverse]
+                matrix[edges] = self.ref_stacks[ids]
+                matched[edges] = self.lut_rgb[ids]
+            debug['quantized_image'] = target.copy()
+            self._edge_restore = (edges, matrix[edges].copy(), matched[edges].copy())
+            return matched, matrix, target, debug
+
         def process_image(self, *a, **k):
             matcher = make_matcher(metric, self.lut_rgb, wL=wL, hue_params=hue_params)
             if matcher is not None:
@@ -483,11 +528,16 @@ def run_lumina(image_path: str, lut_path: str, mode_key: str, width_mm: float, s
                 print(f"[STACK5] pixel matcher: {matcher.describe()}")
             capture['matcher'] = matcher.describe() if matcher is not None else 'lumina 8-bit Lab KDTree'
             res = Orig.process_image(self, *a, **k)
+            edges, edge_stacks, edge_rgb = self._edge_restore
+            res['material_matrix'][edges] = edge_stacks
+            res['matched_rgb'][edges] = edge_rgb
+            res['material_matrix'][~np.asarray(res['mask_solid'], bool)] = -1
+            res['protected_edges'] = edges & np.asarray(res['mask_solid'], bool)
             mm = np.asarray(res['material_matrix'])
             mask = np.asarray(res['mask_solid'], bool)
             info = {'min_region_px': int(min_region_px), 'before': region_stats(mm, mask, max(int(min_region_px), 16))}
-            if int(min_region_px) > 1:
-                new_mm, st = min_region_cleanup(mm, mask, int(min_region_px))
+            if int(min_region_px) > 1 and stopping is None:
+                new_mm, st = min_region_cleanup(mm, mask, int(min_region_px), protected_mask=res['protected_edges'])
                 res['material_matrix'] = new_mm
                 res['matched_rgb'] = resync_matched_rgb(new_mm, mask, res['matched_rgb'], self.lut_rgb, self.ref_stacks)
                 info['cleanup'] = st
@@ -495,6 +545,15 @@ def run_lumina(image_path: str, lut_path: str, mode_key: str, width_mm: float, s
             else:
                 info['cleanup'] = None
                 info['after'] = info['before']
+            if stopping is not None:
+                from core.stack5.stopping import stop_at_best_match
+                new_mm, preview, heights, report = stop_at_best_match(
+                    res, **stopping, metric=metric, wL=wL, hue_params=hue_params,
+                    min_region_px=min_region_px)
+                res['material_matrix'], res['matched_rgb'] = new_mm, preview
+                res['stop_layers'], res['early_stopping'] = heights, report
+                info['cleanup'] = report['whole_recipe_cleanup']
+                info['after'] = region_stats(new_mm, mask, max(int(min_region_px), 16))
             capture['cleanup'] = info
             capture['result'] = res
             capture['processor'] = self
@@ -531,7 +590,10 @@ def run_lumina(image_path: str, lut_path: str, mode_key: str, width_mm: float, s
 
 # --------------------------------------------------------------------------- stats
 def material_stats(result: dict, n_slots: int, slot_names: Sequence[str], structure: str,
-                   spacer_mm: float, backing_slot: int) -> dict:
+                   spacer_mm: float, backing_slot: int,
+                   first_layer_mm: float = PrinterConfig.LAYER_HEIGHT,
+                   layer_h: float = LAYER_H, orientation: str = 'face-down',
+                   backing_layer_h: Optional[float] = None) -> dict:
     mm = np.asarray(result['material_matrix'])
     mask = np.asarray(result['mask_solid'], bool)
     solid = mm[mask]                                        # (P,L)
@@ -540,10 +602,13 @@ def material_stats(result: dict, n_slots: int, slot_names: Sequence[str], struct
     valid = solid >= 0
     counts = np.bincount(solid[valid].ravel(), minlength=n_slots)[:n_slots].astype(np.float64)
     layer_share = counts / max(counts.sum(), 1.0)
-    surf = solid[:, 0]
+    # First occupied viewing-order entry is the exposed material; all air means backing.
+    first_occupied = np.argmax(valid, axis=1)
+    surf = solid[np.arange(P), first_occupied].copy()
+    surf[~valid.any(axis=1)] = backing_slot
     surf_counts = np.bincount(surf[surf >= 0], minlength=n_slots)[:n_slots].astype(np.float64)
     surf_share = surf_counts / max(P, 1)
-    pure_px = is_pure(solid) if P else np.zeros(0, bool)
+    pure_px = np.all((solid == surf[:, None]) | ~valid, axis=1)
     pure_share_by = {}
     for i, nme in enumerate(slot_names):
         pure_share_by[nme] = float(np.count_nonzero(pure_px & (surf == i)) / max(P, 1))
@@ -554,6 +619,9 @@ def material_stats(result: dict, n_slots: int, slot_names: Sequence[str], struct
         per_layer.append(int(ids.size))
     changes_optical = int(sum(max(0, n - 1) for n in per_layer))
     spacer_layers = max(1, int(round(float(spacer_mm) / PrinterConfig.LAYER_HEIGHT)))
+    if orientation == 'face-up':
+        spacer_layers, base_height, _ = face_up_backing_schedule(
+            spacer_mm, first_layer_mm, layer_h, backing_layer_h)
     if structure == 'double':
         total_layers = 2 * L + spacer_layers
         tool_changes = 2 * changes_optical
@@ -565,6 +633,12 @@ def material_stats(result: dict, n_slots: int, slot_names: Sequence[str], struct
     layer_seq = sets + [{int(backing_slot)}] * spacer_layers
     if structure == 'double':
         layer_seq = layer_seq + sets[::-1]
+    if orientation == 'face-up':
+        optical_sets = sets[::-1]
+        while optical_sets and not optical_sets[-1]:
+            optical_sets.pop()
+        layer_seq = [{int(backing_slot)}] * spacer_layers + optical_sets
+        total_layers = len(layer_seq)
     extra = 0
     for a, b in zip(layer_seq[:-1], layer_seq[1:]):
         if a and b and not (a & b):
@@ -583,7 +657,7 @@ def material_stats(result: dict, n_slots: int, slot_names: Sequence[str], struct
         'pixel_scale_mm': float(result['pixel_scale']),
         'n_solid_pixels': int(P),
         'n_unique_stacks_used': int(uniq.shape[0]),
-        'n_pure_stacks_used': int(np.count_nonzero(is_pure(uniq))) if uniq.shape[0] else 0,
+        'n_pure_stacks_used': int(sum(len(set(row[row >= 0].tolist())) <= 1 for row in uniq)),
         'per_slot_layer_share': {n: float(layer_share[i]) for i, n in enumerate(slot_names)},
         'per_slot_viewing_surface_share': {n: float(surf_share[i]) for i, n in enumerate(slot_names)},
         'pure_stack_pixel_share': float(np.count_nonzero(pure_px) / max(P, 1)),
@@ -594,7 +668,8 @@ def material_stats(result: dict, n_slots: int, slot_names: Sequence[str], struct
         'tool_changes_est': int(tool_changes),
         'tool_changes_est_with_layer_transitions': int(tool_changes + extra),
         'total_print_layers': int(total_layers),
-        'total_height_mm': float(total_layers * PrinterConfig.LAYER_HEIGHT),
+        'total_height_mm': float(base_height + (total_layers - spacer_layers) * layer_h
+                                 if orientation == 'face-up' else first_layer_mm + (total_layers - 1) * layer_h),
         'mean_dE_matched_quantized_vs_lut': mean_de_matched,
         'material_matrix_sha256': h,
     }
@@ -663,6 +738,97 @@ def _copy_entry_counting_triangles(zin: zipfile.ZipFile, info: zipfile.ZipInfo,
     return counts
 
 
+_VERTEX_Z = re.compile(rb'(<vertex [^>]*?z=")([^"]+)(")')
+
+
+def _copy_entry_shifting_z(zin: zipfile.ZipFile, info: zipfile.ZipInfo, zout: zipfile.ZipFile,
+                           dz: float, z_min: float, vertex_map=None) -> list[int]:
+    """Stream-copy an object .model like _copy_entry_counting_triangles, but lift
+    every vertex with z >= z_min by dz.
+
+    This is how a first layer thicker than the colour layer is realised: the
+    converter meshed the viewing layer at Z 0..layer_h, so shifting everything
+    above it by (first_layer - layer_h) stretches that one voxel layer to the
+    slicer's first-layer height and keeps every other boundary on a whole
+    layer.  Vertices at z = 0 (the plate face) are untouched.  The file has a
+    handful of distinct z values, so substitutions are memoised.
+    """
+    zi = _zinfo(info.filename)
+    counts: list[int] = []
+    cur = -1
+    carry = b''
+    memo: dict[bytes, bytes] = {}
+    lim = float(z_min) - 1e-6
+
+    def lift(m):
+        raw = m.group(2)
+        out = memo.get(raw)
+        if out is None:
+            v = float(raw)
+            out = (('%.4f' % (v + dz)).rstrip('0').rstrip('.').encode() if v >= lim else raw)
+            memo[raw] = out
+        return m.group(1) + out + m.group(3)
+
+    with zin.open(info) as src, zout.open(zi, 'w', force_zip64=True) as dst:
+        while True:
+            chunk = src.read(8 << 20)
+            if not chunk:
+                break
+            buf = carry + chunk
+            nl = buf.rfind(b'\n')
+            if nl < 0:
+                carry = buf
+                continue
+            block, carry = buf[:nl + 1], buf[nl + 1:]
+            dst.write(vertex_map(block) if vertex_map else _VERTEX_Z.sub(lift, block))
+            pos = 0
+            while True:
+                k = block.find(b'<object ', pos)
+                if k < 0:
+                    if cur >= 0:
+                        counts[cur] += block.count(b'<triangle ', pos)
+                    break
+                if cur >= 0:
+                    counts[cur] += block.count(b'<triangle ', pos, k)
+                counts.append(0)
+                cur = len(counts) - 1
+                pos = k + 8
+        if carry:
+            dst.write(vertex_map(carry) if vertex_map else _VERTEX_Z.sub(lift, carry))
+            if cur >= 0:
+                counts[cur] += carry.count(b'<triangle ')
+    return counts
+
+
+def face_up_vertex_map(width_mm: float, spacer_mm: float, layer_h: float,
+                       first_layer_mm: float, backing_layer_h: Optional[float] = None):
+    """Rotate native face-down geometry 180 degrees about Y, then scale Z.
+
+    The native mesh uses 0.08 mm voxels. Backing is mapped independently so
+    the requested physical base thickness is preserved. The normal first-layer
+    stretch is incorporated here. Two axis reversals preserve winding.
+    """
+    native_base = max(1, round(spacer_mm / LAYER_H)) * LAYER_H
+    _, base, _ = face_up_backing_schedule(spacer_mm, first_layer_mm, layer_h, backing_layer_h)
+    colour_end = N_LAYERS * LAYER_H
+    vertex = re.compile(rb'<vertex\s+[^>]*?/?>')
+    attr = re.compile(rb'([xz])="([^"]+)"')
+    def rewrite(block):
+        def change_vertex(match):
+            def change_attr(m):
+                value = float(m[2])
+                if m[1] == b'x':
+                    value = width_mm - value
+                elif value <= colour_end + 1e-6:
+                    value = base + (colour_end - value) * layer_h / LAYER_H
+                else:
+                    value = base * (colour_end + native_base - value) / native_base
+                return m[1] + b'="' + f'{max(0.0, value):.6f}'.encode() + b'"'
+            return attr.sub(change_attr, match[0])
+        return vertex.sub(change_vertex, block)
+    return rewrite
+
+
 def _fmt_transform(tx: float, ty: float, tz: float = 0.0) -> str:
     return f"1 0 0 0 1 0 0 0 1 {tx:g} {ty:g} {tz:g}"
 
@@ -699,7 +865,8 @@ def postprocess_3mf(src_3mf: str, dst_3mf: str, palette: Sequence[Filament], bac
                     plaque_size_mm: Optional[Sequence[float]] = None,
                     flush_scale: float = 1.0, min_flush: Optional[float] = None,
                     tower_fit: str = 'error',
-                    layer_ranges: Optional[Sequence[tuple[float, float, float]]] = None) -> dict:
+                    layer_ranges: Optional[Sequence[tuple[float, float, float]]] = None,
+                    vertex_map=None) -> dict:
     """Rewrite Lumina's 3MF with an X2D-consistent Metadata/project_settings.config
     for the F parts actually exported (slot order preserved, extruders 1..F), a
     palette-specific flush matrix, a prime tower sized from the modelled per-layer
@@ -774,6 +941,13 @@ def postprocess_3mf(src_3mf: str, dst_3mf: str, palette: Sequence[Filament], bac
                                                stack5_print_overrides(first_layer_mm, layer_h, tower_plan))
         process_diff = apply_stack5_process_preset(cfg, stack5_print_overrides(first_layer_mm, layer_h, tower_plan))
         first_layer_filament_keys = apply_first_layer_filament_overrides(cfg)
+        # Old album templates contain A1 machine scripts despite their X2D label.
+        # Use the actual resolved X2D scripts, and persist the printer overrides.
+        with open(os.path.join(REPO, 'assets', 'x2d_machine_gcodes.json'), encoding='utf-8') as fh:
+            machine_gcodes = json.load(fh)['config']
+        cfg.update(machine_gcodes)
+        printer_diff = set(filter(None, cfg['different_settings_to_system'][-1].split(';')))
+        cfg['different_settings_to_system'][-1] = ';'.join(sorted(printer_diff | set(machine_gcodes)))
         main_xml, ms_xml = _name_object(main_xml, ms_xml, title or os.path.splitext(os.path.basename(dst_3mf))[0])
         lay = tower_plan['layout']
         transform = _fmt_transform(round(lay['plaque_xy'][0], 4), round(lay['plaque_xy'][1], 4), 0.0)
@@ -795,7 +969,13 @@ def postprocess_3mf(src_3mf: str, dst_3mf: str, palette: Sequence[Filament], bac
                 elif info.filename == '3D/3dmodel.model':
                     zout.writestr(_zinfo(info.filename), main_xml)
                 elif info.filename.startswith('3D/Objects/') and info.filename.endswith('.model'):
-                    tri_counts += _copy_entry_counting_triangles(zin, info, zout)
+                    dz = float(first_layer_mm) - float(layer_h)
+                    if vertex_map is not None:
+                        tri_counts += _copy_entry_shifting_z(zin, info, zout, 0, 0, vertex_map)
+                    elif dz > 1e-9:
+                        tri_counts += _copy_entry_shifting_z(zin, info, zout, dz, float(layer_h))
+                    else:
+                        tri_counts += _copy_entry_counting_triangles(zin, info, zout)
                 else:
                     zout.writestr(_zinfo(info.filename), zin.read(info.filename))
             if ranges:
@@ -845,10 +1025,10 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
                          filaments_json: Optional[str] = None,
                          palette: Optional[Sequence[str]] = None, backing: Optional[str] = None,
                          quantize_colors: int = 96, smooth_sigma: float = 10,
-                         structure: str = 'single', spacer_mm: float = 1.6,
+                         structure: str = 'single', spacer_mm: float = 1.0,
                          advisory: Optional[str] = None, out_dir: str = DEFAULT_OUT_DIR,
                          title: Optional[str] = None, seed: int = 0,
-                         must_include: Sequence[str] = (), first_layer_mm: float = 0.08,
+                         must_include: Sequence[str] = (), first_layer_mm: float = 0.20,
                          wL: float = 1.0, hist_k: int = 64, k_opaque: Optional[float] = None,
                          hue_weight: float = 0.0, keep_lumina_output: bool = False,
                          skip_glb: bool = True, td_scale: float = 1.0,
@@ -864,14 +1044,21 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
                          min_region_px: int = DEFAULT_MIN_REGION_PX,
                          dilate: bool = False, flush_scale: float = 1.0,
                          min_flush: Optional[float] = None, tower_fit: str = 'error',
-                         backing_layer_h: Optional[float] = DEFAULT_BACKING_LAYER_H) -> dict:
+                         backing_layer_h: Optional[float] = DEFAULT_BACKING_LAYER_H,
+                         orientation: str = 'face-down', layer_h: float = LAYER_H,
+                         early_stop: bool = True) -> dict:
     """image -> {threemf, preview_png, palette, backing, lut_npz, recipe_json, ams_txt, stats}.
 
     palette: 5 filament names (slot order) or None for the exhaustive search;
     backing: filament name (None -> searched: the backing of the winning
     configuration, palette_report['best']['backing']);
     advisory: 'br' | 'bl' | 'bc' | None; structure: 'single' | 'double';
-    first_layer_mm: must equal the colour layer height (0.08; validated);
+    first_layer_mm: slicer first layer (default 0.20). Face-down stretches the
+        viewing layer; face-up keeps it in the backing.
+    orientation: face-down (legacy) or face-up (single sided).
+    layer_h: optical layer thickness, 0.08 or experimental 0.04 mm;
+    early_stop: face-up columns search all 0..5-layer recipes (default True);
+        near-equal matches prefer simpler recipes. Ignored for face-down jobs.
     td_scale / td_overrides: optical calibration of the library TDs (see
     apply_td_overrides) used for BOTH the palette search and the LUT.
     lut_npz: a MEASURED LUT {rgb (N,3) uint8, stacks (N,5) int32 in palette-slot
@@ -895,7 +1082,30 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
         raise FileNotFoundError(image_path)
     if structure not in STRUCTURE_MODES:
         raise ValueError(f"structure must be one of {sorted(STRUCTURE_MODES)}")
-    stack5_print_overrides(first_layer_mm, LAYER_H)          # validates first_layer_mm early
+    if orientation not in ('face-down', 'face-up'):
+        raise ValueError("orientation must be face-down or face-up")
+    if not np.isfinite(layer_h) or layer_h not in (0.04, 0.08):
+        raise ValueError("colour layer height must be 0.08 or experimental 0.04 mm")
+    if not np.isfinite(first_layer_mm) or not np.isfinite(spacer_mm):
+        raise ValueError("first layer and spacer must be finite")
+    if orientation == 'face-down' and layer_h != LAYER_H:
+        raise ValueError("0.04 mm colour layers require face-up orientation")
+    if orientation == 'face-up':
+        if structure != 'single':
+            raise ValueError("face-up currently requires single-sided structure")
+        if spacer_mm < first_layer_mm:
+            raise ValueError("face-up backing must be at least the first-layer thickness")
+        face_up_backing_schedule(spacer_mm, first_layer_mm, layer_h, backing_layer_h)
+        if not backing_layer_h and abs((spacer_mm - first_layer_mm) / layer_h - round((spacer_mm - first_layer_mm) / layer_h)) > 1e-6:
+            raise ValueError("backing must equal first_layer_mm plus whole colour-height increments")
+    stack5_print_overrides(first_layer_mm, layer_h)
+    stopping_enabled = bool(early_stop and orientation == 'face-up')
+    if stopping_enabled and dilate:
+        raise ValueError('early stopping requires dilation off to keep stopped regions clear')
+    optical_first = first_layer_mm if orientation == 'face-down' else layer_h
+    if layer_h < 0.08:
+        print('[STACK5] EXPERIMENTAL: 0.04 mm is below the X2D 0.4 nozzle profile minimum of 0.08 mm; '
+              'printer minimum is preserved. Validate slicer output and a coupon before printing.')
     if tower_fit not in TOWER_FIT_MODES:
         raise ValueError(f"tower_fit must be one of {TOWER_FIT_MODES}")
     if advisory is not None and str(advisory).lower() in ('', 'none'):
@@ -927,7 +1137,9 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
             raise ValueError("palette must have 2..5 filaments")
         if backing and backing not in names:
             raise KeyError(f"backing {backing!r} must be one of the palette {names}")
+        thick = layer_thicknesses(optical_first, layer_h, N_LAYERS)
         palette_eval = evaluate_palette(hist, names, library, backing=backing, model=model, wL=wL,
+                                        layer_h=thick,
                                         metric=metric, hue_params=hue_params, **scoring_kw)
         palette_report = {'search': 'explicit palette' + ('' if backing else ' x all backings'),
                           'metric': metric, 'best': palette_eval, 'top': [palette_eval],
@@ -935,7 +1147,9 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
     else:
         if not 1 <= int(max_spools) <= 5:
             raise ValueError("max_spools must be within 1..5 (one AMS)")
+        thick = layer_thicknesses(optical_first, layer_h, N_LAYERS)
         names, palette_report = select_palette(hist, library, model, n=int(max_spools), n_min=min_spools,
+                                               layer_h=thick,
                                                must_include=must_include, backing=backing, wL=wL, prefer=prefer,
                                                prefer_tol=prefer_tol, metric=metric, hue_params=hue_params,
                                                spool_penalty=float(spool_penalty), need_share=float(need_share),
@@ -961,14 +1175,21 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
         if not all(np.all(lut_stacks[r] == i) for i, r in enumerate(pure_rows) if r < lut_stacks.shape[0]):
             raise ValueError(f"{lut_npz}: rows are not in enumerate_stacks() order (pure stacks misplaced)")
         lut_source = os.path.abspath(lut_npz)
+        if orientation == 'face-up' or layer_h != LAYER_H:
+            raise ValueError('face-up requires a synthetic LUT until a matching face-up calibration is available')
+        if abs(float(first_layer_mm) - LAYER_H) > 1e-9:
+            print(f"[STACK5] warning: measured LUT {lut_npz} was photographed from a board printed with a "
+                  f"{LAYER_H:g} mm first layer; this print uses {first_layer_mm:g}, so the viewing layer is "
+                  f"thicker than the board measured (translucent top colours will drift)")
         lut_npz = save_lut_npz(os.path.join(job_dir, f"{slug}_stack5_lut.npz"), lut_rgb, lut_stacks,
-                               dict(lut_meta(fils, backing_slot, model), measured_from=lut_source,
+                               dict(lut_meta(fils, backing_slot, model, layer_h=layer_h, first_layer_mm=optical_first), measured_from=lut_source,
                                     model='measured'))
     else:
-        lut_rgb, lut_stacks = synth_lut(fils, backing_slot, model)
+        lut_rgb, lut_stacks = synth_lut(fils, backing_slot, model, layer_h=layer_h, first_layer_mm=optical_first)
         lut_source = None
         lut_npz = save_lut_npz(os.path.join(job_dir, f"{slug}_stack5_lut.npz"), lut_rgb, lut_stacks,
-                               lut_meta(fils, backing_slot, model))
+                               dict(lut_meta(fils, backing_slot, model, layer_h=layer_h, first_layer_mm=optical_first),
+                                    orientation=orientation, print_first_layer_mm=first_layer_mm))
     mode_key = register_stack5_mode(fils)
     timing['lut_s'] = time.perf_counter() - t0
 
@@ -993,7 +1214,9 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
         lum = run_lumina(image_for_lumina, lut_npz, mode_key, width_mm, spacer_mm, structure,
                          quantize_colors, smooth_sigma, backing_slot, hue_weight=hue_weight,
                          skip_glb=skip_glb, dilate=dilate, min_region_px=min_region_px,
-                         metric=metric, wL=wL, hue_params=hue_params)
+                         metric=metric, wL=wL, hue_params=hue_params,
+                         stopping=(dict(filaments=fils, backing_slot=backing_slot, model=model, layer_h=layer_h)
+                                   if stopping_enabled else None))
     finally:
         try:
             os.remove(image_for_lumina)
@@ -1006,18 +1229,28 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
     # 5. post-process the 3MF (X2D project settings, flush matrix, prime tower,
     #    plaque placement) into the job directory
     t0 = time.perf_counter()
-    stats = material_stats(lum['result'], len(fils), names, structure, spacer_mm, backing_slot)
+    stats = material_stats(lum['result'], len(fils), names, structure, spacer_mm, backing_slot,
+                           first_layer_mm=first_layer_mm, layer_h=layer_h, orientation=orientation,
+                           backing_layer_h=backing_layer_h)
     tw_px, th_px = lum['result']['dimensions']
     px_mm = float(lum['result']['pixel_scale'])
     threemf = os.path.join(job_dir, f"{slug}_stack5.3mf")
-    ranges = backing_layer_ranges(stats['total_print_layers'], structure, LAYER_H, N_LAYERS, backing_layer_h)
+    ranges = backing_layer_ranges(stats['total_print_layers'], structure, LAYER_H, N_LAYERS, backing_layer_h,
+                                  first_layer_mm=first_layer_mm)
+    if orientation == 'face-up':
+        _, actual_backing_mm, base_h = face_up_backing_schedule(
+            spacer_mm, first_layer_mm, layer_h, backing_layer_h)
+        ranges = [(0.0, actual_backing_mm, base_h)] if backing_layer_h else []
+        stats['actual_backing_mm'] = actual_backing_mm
     try:
         post = postprocess_3mf(lum['threemf'], threemf, fils, backing_slot, lut_rgb,
-                               first_layer_mm=first_layer_mm, title=title,
+                               first_layer_mm=first_layer_mm, layer_h=layer_h, title=title,
                                printed_layer_sets=stats['printed_layer_material_sets'],
                                plaque_size_mm=(tw_px * px_mm, th_px * px_mm),
                                flush_scale=flush_scale, min_flush=min_flush, tower_fit=tower_fit,
-                               layer_ranges=ranges)
+                               layer_ranges=ranges,
+                               vertex_map=(face_up_vertex_map(tw_px * px_mm, spacer_mm, layer_h, first_layer_mm, backing_layer_h)
+                                           if orientation == 'face-up' else None))
     finally:
         # always drop Lumina's intermediate export (tens of MB per album) unless asked
         # to keep it - a failed post-process (e.g. prime tower does not fit) must not
@@ -1031,6 +1264,10 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
                         pass
     timing['postprocess_s'] = time.perf_counter() - t0
 
+    stop_layers_path = None
+    if stopping_enabled:
+        stop_layers_path = os.path.join(job_dir, f'{slug}_stop_layers.npy')
+        np.save(stop_layers_path, lum['result']['stop_layers'])
     preview_png = os.path.join(job_dir, f"{slug}_preview.png")
     lum['preview_img'].save(preview_png)
 
@@ -1058,9 +1295,10 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
                                   if cl.get('cleanup') else 0),
         'mesh_dilated': bool(lum.get('dilated', False)),
         'lumina_status': lum['status'],
+        'early_stopping': lum['result'].get('early_stopping', {'enabled': False}),
         'backing_layer_h': float(backing_layer_h) if ranges else None,
         'backing_layer_ranges': [list(r) for r in ranges],
-        'sliced_layers_est': int(N_LAYERS * (2 if structure == 'double' else 1)
+        'sliced_layers_est': stats['total_print_layers'] if orientation == 'face-up' else int(N_LAYERS * (2 if structure == 'double' else 1)
                                  + (round((ranges[0][1] - ranges[0][0]) / ranges[0][2]) if ranges
                                     else stats['total_print_layers'] - N_LAYERS * (2 if structure == 'double' else 1))),
     })
@@ -1084,7 +1322,10 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
         'settings': {'width_mm': float(width_mm), 'quantize_colors': int(quantize_colors),
                      'smooth_sigma': float(smooth_sigma), 'structure': structure,
                      'spacer_mm': float(spacer_mm), 'advisory': advisory, 'seed': int(seed),
-                     'first_layer_mm': float(first_layer_mm), 'layer_h': LAYER_H, 'wL': float(wL),
+                     'first_layer_mm': float(first_layer_mm), 'layer_h': layer_h,
+                     'orientation': orientation, 'experimental_layer_height': layer_h < 0.08,
+                     'early_stop': stopping_enabled,
+                     'optical_layer_thicknesses_mm': thick.tolist(), 'wL': float(wL),
                      'hist_k': int(hist_k), 'hue_weight': float(hue_weight),
                      'td_scale': float(td_scale), 'td_overrides': dict(td_overrides or {}),
                      'must_include': list(must_include or ()), 'prefer': list(prefer or ()),
@@ -1122,7 +1363,7 @@ def convert_album_stack5(image_path: str, width_mm: float = 150.0,
         'cleanup': cl,
         'palette_report': palette_report,
         'outputs': {'threemf': threemf, 'preview_png': preview_png, 'lut_npz': lut_npz,
-                    'ams_txt': ams_txt, 'stamped_input': stamped_png},
+                    'ams_txt': ams_txt, 'stamped_input': stamped_png, 'stop_layers': stop_layers_path},
         'timing': timing,
     }
     recipe_json = os.path.join(job_dir, f"{slug}_recipe.json")

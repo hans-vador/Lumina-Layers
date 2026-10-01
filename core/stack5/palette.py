@@ -731,7 +731,8 @@ def select_palette(hist: Hist, library: Mapping[str, Filament], model=None, n: i
         'model': getattr(model, 'name', type(model).__name__),
         'model_repr': repr(model),
         'layers': int(layers),
-        'layer_h': float(layer_h),
+        'layer_h': (float(layer_h) if np.ndim(layer_h) == 0
+                    else [float(t) for t in np.asarray(layer_h).ravel()]),
         'backing_rule': backing_rule,
         'best': best,
         'best_unconstrained': best_unconstrained,

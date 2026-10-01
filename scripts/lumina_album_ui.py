@@ -137,6 +137,70 @@ def run_jobs(params, q):
             q.put(('status', f'Working on {os.path.basename(img)} ...'))
             print('=' * 70)
             print(f'[UI] {time.strftime("%Y-%m-%d %H:%M:%S")}  {img}')
+            if params.get('style') == 'region-band':
+                from core.band.regions import convert_region_band
+                res = convert_region_band(img, params['out_dir'], width_mm=params['width'],
+                                          palette=params['palette'], filaments_json=FILAMENTS_JSON,
+                                          max_spools=5 if params['spools'] == (5, 5) else 4)
+                st = res['stats']
+                tried = ', '.join(f"{t['regions']}: {t['J']:.0f}" for t in st['regions_tried'])
+                print(f"[REGION LAYERS] regions tried (score, lower is better) - {tried}")
+                print(f"[REGION LAYERS] {st['region_count']} region(s); "
+                      + ('your spools, all used: ' if st['palette_mode'] == 'custom' else 'auto-picked spools: ')
+                      + ', '.join(st['filaments']))
+                if st['accents']:
+                    print('[REGION LAYERS] accents (small areas that printed in the wrong colour family): '
+                          + ', '.join(f"{a['area_mm2']:.0f} mm2" for a in st['accents']))
+                for r in st['regions']:
+                    print(f"[REGION LAYERS]   region {r['region']}{' (accent)' if r.get('accent') else ''} "
+                          f"({r['area_share']*100:.1f}% of the plaque): "
+                          f"{' -> '.join(r['spools'])}"
+                          + (f"  swaps at {', '.join(f'{z:g}' for z in r['swaps_mm'])} mm" if r['swaps_mm'] else ''))
+                if st['region_count'] == 1:
+                    print('[REGION LAYERS] one region fits best: this cover prints like Reference layers '
+                          '(plate-wide swaps, no prime tower)')
+                else:
+                    print(f"[REGION LAYERS] {st['mixed_layers']} layers hold two spools: {st['tool_changes_planned']} "
+                          f"tool changes, ~{st['purge_mm3_planned'] / 1000:.1f} cm3 purged on the prime tower")
+                print(f"[REGION LAYERS] predicted colour error dE {st['mean_dE']:.1f} (p90 {st['p90_dE']:.1f}); "
+                      f"region map: {res['regions_png']}")
+                print(f"[REGION LAYERS] 3mf: {res['threemf']}")
+                q.put(('done', res))
+                continue
+            if params.get('style') == 'reference-band':
+                from core.band.reference import convert_reference_band
+                # auto: at most one AMS (4) unless "Always 5 spools" is chosen
+                lo, hi = (5, 5) if params['spools'] == (5, 5) else (2, 4)
+                res = convert_reference_band(img, params['out_dir'], width_mm=params['width'],
+                                             palette=params['palette'], filaments_json=FILAMENTS_JSON,
+                                             min_spools=lo, max_spools=hi)
+                st = res['stats']
+                lv = st['tone']['brightness_levels']
+                if lv:
+                    print(f"[REFERENCE BAND] contrast: cover brightness {lv[0]:.2f}..{lv[1]:.2f} stretched over the "
+                          f"whole relief (contrast {st['tone']['contrast']:g}); colours fitted to that "
+                          f"(_target.png)")
+                if st['palette_mode'] in ('auto', 'custom'):
+                    fit = st['colour_fit']
+                    if st['palette_mode'] == 'auto':
+                        print(f"[REFERENCE BAND] auto-picked from all your spools ({fit['palettes_searched']} "
+                              f"combinations, {fit['plans_searched']} swap plans):")
+                        for size, b in fit['by_size'].items():
+                            print(f"[REFERENCE BAND]   best {size}: {' -> '.join(b['filaments'])}  dE {b['mean_dE']:.1f}")
+                    print(f"[REFERENCE BAND] spools, bottom -> top: {' -> '.join(st['filaments'])}")
+                    print('[REFERENCE BAND] swaps: ' + ', '.join(f"{z:g} mm -> {n}" for (z, _, _), n
+                                                                  in zip(st['swap_entries'], st['filaments'][1:])))
+                    print(f"[REFERENCE BAND] predicted colour error dE {fit['mean_dE']:.1f} "
+                          f"(p90 {fit['p90_dE']:.1f}); preview shows predicted colours")
+                else:
+                    print('[REFERENCE BAND] Graduation colours: Black -> Purple -> Pink/Red -> White; three swaps. '
+                          'Height preview only.')
+                lw = st['thin_feature_lowered']
+                print(f"[REFERENCE BAND] removed features thinner than {st['min_feature_mm']:g} mm "
+                      f"({lw['pixel_fraction']*100:.0f}% of pixels lowered, mean {lw['mean_mm']:.3f} mm)")
+                print(f"[REFERENCE BAND] 3mf: {res['threemf']}")
+                q.put(('done', res))
+                continue
             kw = dict(width_mm=params['width'], palette=params['palette'], backing=params['backing'],
                       advisory=params['advisory'], out_dir=params['out_dir'], seed=params['seed'],
                       prefer=params['prefer'], flush_scale=params['flush_scale'],
@@ -166,6 +230,8 @@ def run_jobs(params, q):
                                                    smoothing_px=params['depth_smoothing']))
                 convert = convert_album_relief
             else:
+                kw.update(orientation='face-up' if params.get('style') == 'flat-up' else 'face-down',
+                          layer_h=params.get('layer_h', 0.08), early_stop=params.get('early_stop', True))
                 convert = convert_album_stack5
             try:
                 res = convert(img, **kw)
@@ -194,6 +260,10 @@ def run_jobs(params, q):
             for line in res['ams']:
                 print(f'[STACK5] {line}')
             st = res['stats']
+            stop = st.get('early_stopping', {})
+            if stop.get('enabled'):
+                print(f"[STACK5] early stopping: {100 * stop['optical_material_saved_fraction']:.1f}% fewer optical voxels; "
+                      f"pixels at 0..5 layers: {stop['pixels_by_colour_layer_count']}")
             print(f"[STACK5] tool changes (est.): {st['tool_changes_est']} over {st['total_print_layers']} layers; "
                   f"mean colour error dE {st['mean_dE_predicted_palette']:.1f}")
             tw = st['tower']
@@ -263,11 +333,27 @@ class App(tk.Tk):
         style_row = ttk.Frame(f)
         style_row.grid(row=2, column=0, columnspan=3, sticky='w', **pad)
         ttk.Label(style_row, text='Print style').grid(row=0, column=0, sticky='w')
-        self.style = tk.StringVar(value='flat')
+        self.style = tk.StringVar(value='flat-up')
         ttk.Radiobutton(style_row, text='Flat plaque (Stack5, prints face down)', variable=self.style,
                         value='flat').grid(row=0, column=1, sticky='w', padx=(8, 14))
         ttk.Radiobutton(style_row, text='Relief (Stack5 colours on a 3D relief, prints face up)', variable=self.style,
                         value='relief').grid(row=0, column=2, sticky='w')
+        ttk.Radiobutton(style_row, text='Flat plaque (Stack5, prints face up)', variable=self.style,
+                        value='flat-up').grid(row=1, column=1, sticky='w', padx=(8, 14))
+        ttk.Radiobutton(style_row, text='Reference layers (face up, Graduation style): Auto picks your spools, or tick 2-5',
+                        variable=self.style, value='reference-band').grid(row=2, column=1, columnspan=2, sticky='w', padx=(8, 14))
+        ttk.Radiobutton(style_row, text='Region layers (face up): Reference relief, its own spool sequence per colour region',
+                        variable=self.style, value='region-band').grid(row=3, column=1, columnspan=2, sticky='w', padx=(8, 14))
+        layer_row = ttk.Frame(style_row)
+        layer_row.grid(row=1, column=2, sticky='w')
+        ttk.Label(layer_row, text='Flat colour layers (first layer 0.20 mm): ').pack(side='left')
+        self.colour_layer = ttk.Combobox(layer_row, values=['0.08', '0.04 experimental'],
+                                         state='readonly', width=18)
+        self.colour_layer.set('0.08')
+        self.colour_layer.pack(side='left')
+        self.early_stop = tk.BooleanVar(value=True)
+        ttk.Checkbutton(style_row, text='Face up: stop each area at its best colour match',
+                        variable=self.early_stop).grid(row=4, column=1, columnspan=2, sticky='w', padx=8)
         self.style.trace_add('write', lambda *_: self._on_style())
 
         self.relief_frame = ttk.LabelFrame(f, text='Relief', padding=(8, 4))
@@ -625,18 +711,24 @@ class App(tk.Tk):
         width = float(self.width.get())
         if not 20 <= width <= 250:
             raise ValueError('Width must be between 20 and 250 mm.')
+        style = self.style.get()
         palette = None
         if self.mode.get() == 'manual':
             palette = [n for n in self.names if self.checks[n].get()]
-            if len(palette) != 5:
+            if style in ('reference-band', 'region-band'):
+                # any 2-5 spools; they are stacked dark -> light and the swap layers fitted to the image
+                if not 2 <= len(palette) <= 5:
+                    raise ValueError(f'Tick 2 to 5 spools for Reference / Region layers (you ticked {len(palette)}).')
+            elif len(palette) != 5:
                 raise ValueError(f'Tick exactly 5 spools (you ticked {len(palette)}).')
         backing = None if self.backing.get() == 'Auto' else self.backing.get()
-        if palette and backing and backing not in palette:
+        if style not in ('reference-band', 'region-band') and palette and backing and backing not in palette:
             raise ValueError('The backing spool must be one of the 5 ticked spools.')
         prefer = () if self.prefer.get() == '(none)' else (self.prefer.get(),)
-        style = self.style.get()
         params = {
             'style': style,
+            'layer_h': float(self.colour_layer.get().split()[0]),
+            'early_stop': self.early_stop.get(),
             'images': list(self.images), 'width': width, 'palette': palette, 'backing': backing,
             'prefer': prefer, 'advisory': ADVISORY[self.advisory.get()],
             'flush_scale': float(self.flush.get()), 'auto_purge': bool(self.auto_purge.get()),

@@ -403,9 +403,12 @@ def test_depth_changes_geometry_but_not_the_stack5_recipe(tmp_path):
     ra = json.loads(open(a['recipe_json']).read())
     rb = json.loads(open(b['recipe_json']).read())
     assert ra['colour']['palette_report']['best']['cost'] == rb['colour']['palette_report']['best']['cost']
-    # ... and it is exactly the flat (face-down) Stack5 recipe for the same image + palette
+    # ... and it is exactly the flat (face-down) Stack5 recipe for the same image + palette.
+    # The recipe depends on the first-layer height (the LUT models the viewing layer at its
+    # real thickness), and relief still models a 0.08 mm first layer, so compare at 0.08 -
+    # flat Stack5's own default is 0.16.  If relief ever moves to 0.16 this pins it.
     flat = convert_album_stack5(img, width_mm=4.8, palette=PALETTE, quantize_colors=12,
-                                out_dir=str(tmp_path / 'flat'), seed=0)
+                                out_dir=str(tmp_path / 'flat'), seed=0, first_layer_mm=0.08)
     assert flat['stats']['material_matrix_sha256'] == a['material_matrix_sha256']
     assert flat['palette'] == a['palette'] and flat['backing'] == a['backing']
 

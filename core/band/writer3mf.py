@@ -265,6 +265,11 @@ def build_project_settings(template: dict, filaments: Sequence,
     for k, v in overrides.items():
         if isinstance(v, list):
             cfg[k] = [str(x) for x in v]
+        elif isinstance(cfg.get(k), list):
+            # Per-extruder / per-filament keys are lists in Bambu's format.  A
+            # scalar override broadcasts across the template's existing length
+            # so callers can say initial_layer_speed=30 without knowing E.
+            cfg[k] = [str(v)] * len(cfg[k])
         else:
             cfg[k] = str(v)
     cfg.pop('initial_layer_height', None)  # not a Bambu key
